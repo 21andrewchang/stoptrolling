@@ -1,20 +1,41 @@
 <script lang="ts">
 	import ReviewModal from '$lib/components/ReviewModal.svelte';
+	import DayDots from '$lib/components/DayDots.svelte';
 	import { onMount, onDestroy } from 'svelte';
 	import { fly } from 'svelte/transition';
 	import { dayLog, type HourEntry, endHourOf, defaultHours } from '$lib/stores/day-log';
 	import { ymd, slotRange, minutesUntil, rangeLabel as labelFor } from '$lib/utils/time';
 	import { supabase } from '$lib/supabase';
+	import type { User } from '@supabase/supabase-js';
 
 	// ---------- Props ----------
 	let { data } = $props<{ data: { date: string } }>();
 	const { date } = data;
 
-	// ---------- Constants ----------
-	const username = '21andrewch';
-
 	// ---------- Ensure store for date ----------
 	let dayId = $state<string | null>(null);
+	let firstName = $state<string | null>(null);
+	let userEmail = $state<string | null>(null);
+	let hasUser = $state(false);
+
+	function deriveFirstName(user: User): string | null {
+		const metadata = (user.user_metadata ?? {}) as Record<string, unknown>;
+		const getString = (key: string): string => {
+			const value = metadata[key];
+			return typeof value === 'string' ? value.trim() : '';
+		};
+
+		const candidate = getString('first_name');
+		if (candidate) return candidate.split(/\s+/)[0] ?? candidate;
+
+		const fullName = getString('full_name') || getString('name');
+		if (fullName) return fullName.split(/\s+/)[0] ?? fullName;
+
+		const email = typeof user.email === 'string' ? user.email : '';
+		if (email) return email.split('@')[0] ?? email;
+
+		return null;
+	}
 
 	async function ensureDayId(): Promise<string | null> {
 		const { data: userRes, error: authErr } = await supabase.auth.getUser();
@@ -22,8 +43,18 @@
 			console.error('auth error', authErr);
 			return null;
 		}
-		const user_id = userRes?.user?.id;
-		if (!user_id) return null;
+		const user = userRes?.user ?? null;
+		const user_id = user?.id;
+		if (!user_id || !user) {
+			firstName = null;
+			userEmail = null;
+			hasUser = false;
+			return null;
+		}
+
+		firstName = deriveFirstName(user);
+		userEmail = typeof user.email === 'string' ? user.email : null;
+		hasUser = true;
 
 		// Upsert the day row and return its id
 		const { data, error } = await supabase
@@ -114,13 +145,27 @@
 		console.log('Loaded day from database', { date, ...remote });
 		dayLog.replaceHours(date, remote.hours);
 		dayLog.setGoal(date, remote.goal);
-		console.log(remote.goal);
 	}
 
 	onMount(() => {
 		dayLog.ensure(date);
 		void syncFromDatabase();
 	});
+
+	async function handleAuthButtonClick(): Promise<void> {
+		if (hasUser) return;
+		try {
+			const redirectTo =
+				typeof window !== 'undefined' ? `${window.location.origin}/d/${date}` : undefined;
+			const { error } = await supabase.auth.signInWithOAuth({
+				provider: 'google',
+				options: redirectTo ? { redirectTo } : undefined
+			});
+			if (error) console.error('Supabase sign-in failed:', error);
+		} catch (err) {
+			console.error('Supabase sign-in exception:', err);
+		}
+	}
 
 	// ---------- State ----------
 	let showReview = $state(false);
@@ -212,12 +257,6 @@
 	);
 
 	const isActiveSlot = $derived((() => editingIndex !== null && editingIndex === currentIndex)());
-
-	let currentBody = $state('');
-	$effect(() => {
-		currentBody = displayedEntry ? (displayedEntry.body ?? '') : '';
-	});
-
 	const placeholderStr = $derived(
 		(() => {
 			const e = displayedEntry;
@@ -247,6 +286,14 @@
 			return 'What are you doing right now?';
 		})()
 	);
+	const leadingText = $derived(
+		displayedEntry ? (isActiveSlot ? rangeLabel(displayedEntry) : placeholderStr) : ''
+	);
+
+	let currentBody = $state('');
+	$effect(() => {
+		currentBody = displayedEntry ? (displayedEntry.body ?? '') : '';
+	});
 
 	// ---------- UI helpers ----------
 	function isFuture(entry: HourEntry): boolean {
@@ -411,49 +458,48 @@
 	onClose={() => (showReview = false)}
 />
 
-<header class="fixed top-4 left-6 z-10 text-stone-600">
-	<div class="flex items-center gap-2 font-mono text-sm" in:fly={{ y: 5, delay: 0, duration: 300 }}>
-		<span class="font-semibold text-stone-800">{date.slice(5)}</span>
-		<span class="max-w-[50vw] truncate">{goal ? `I will ${goal}` : ''}</span>
-	</div>
-
-	<div class="mt-2 flex flex-wrap items-center gap-1" aria-label="Hours" role="list">
-		{#each entries as entry, i}
-			<button
-				type="button"
-				in:fly|global={{ y: 5, delay: i * 30 + 100, duration: 300 }}
-				class={`h-3 w-3 rounded-full border ${circleClassFor(entry)} cursor-pointer outline-none`}
-				role="listitem"
-				aria-label={`${rangeLabel(entry)} — ${entry.body?.trim() ? entry.body.trim() : 'Trolling'}`}
-			/>
-		{/each}
-	</div>
-</header>
-
-{#if username}
-	<header class="fixed top-4 right-6 z-10">
-		<button class="flex items-center gap-2">
-			<div class="text-stone-500">
-				<svg
-					width="20"
-					height="20"
-					viewBox="0 0 24 24"
-					fill="currentColor"
-					stroke="currentColor"
-					stroke-width="2"
-					stroke-linecap="round"
-					stroke-linejoin="round"
-					shape-rendering="geometricPrecision"
-					class="h-4 w-4 transition-colors duration-200"
-				>
-					<path d="M20 21.5v-2.5a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2.5h16" />
-					<circle cx="12" cy="7" r="4" />
-				</svg>
-			</div>
-			<span class="font-mono text-sm text-stone-500">{username}</span>
-		</button>
+{#if goal}
+	<header class="fixed top-4 left-6 z-10 text-stone-600">
+		<div
+			class="flex items-center gap-2 font-mono text-sm"
+			in:fly={{ y: 5, delay: 0, duration: 300 }}
+		>
+			<span class="font-semibold text-stone-800">{date.slice(5)}</span>
+			<span class="max-w-[50vw] truncate">{goal ? `I will ${goal}` : ''}</span>
+		</div>
 	</header>
 {/if}
+
+<header class="fixed top-4 right-6 z-10">
+	<button type="button" class="flex items-center gap-2" onclick={handleAuthButtonClick}>
+		<div class="text-stone-500">
+			<svg
+				width="20"
+				height="20"
+				viewBox="0 0 24 24"
+				fill="currentColor"
+				stroke="currentColor"
+				stroke-width="2"
+				stroke-linecap="round"
+				stroke-linejoin="round"
+				shape-rendering="geometricPrecision"
+				class="h-4 w-4 transition-colors duration-200"
+			>
+				<path d="M20 21.5v-2.5a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2.5h16" />
+				<circle cx="12" cy="7" r="4" />
+			</svg>
+		</div>
+		<span class="font-mono text-sm text-stone-500">
+			{#if firstName}
+				{firstName}
+			{:else if userEmail}
+				{userEmail}
+			{:else}
+				Sign In
+			{/if}
+		</span>
+	</button>
+</header>
 
 <div class="flex min-h-screen items-center justify-center bg-stone-50 px-6">
 	{#if !showReview}
@@ -462,7 +508,7 @@
 				<div class="flex items-center justify-between text-stone-600">
 					<div class="flex min-w-0 items-center gap-2">
 						<span class="font-mono text-lg tracking-widest">
-							{displayedEntry ? rangeLabel(displayedEntry) : ''}
+							{leadingText}
 						</span>
 
 						{#if reviewIndex !== null && entries[reviewIndex]?.body?.trim()}
@@ -480,20 +526,26 @@
 			</div>
 
 			{#if reviewIndex === null}
-				<form onsubmit={onSubmit} class="flex flex-row">
-					<input
-						type="text"
-						placeholder={placeholderStr}
-						value={currentBody}
-						oninput={onInput}
-						disabled={!isActiveSlot || !displayedEntry}
-						class="h-14 w-full border-none bg-transparent pr-2 pl-0 font-mono text-3xl font-light
+				{#if isActiveSlot || !displayedEntry}
+					<form onsubmit={onSubmit} class="flex flex-row">
+						<input
+							type="text"
+							placeholder={placeholderStr}
+							value={currentBody}
+							oninput={onInput}
+							disabled={!isActiveSlot || !displayedEntry}
+							class="h-14 w-full border-none bg-transparent pr-2 pl-0 font-mono text-3xl font-light
                    text-stone-900 ring-0 outline-none placeholder:text-stone-300
                    focus:border-transparent focus:ring-0 focus:outline-none"
-						autofocus
-						aria-label="Current hour note"
-					/>
-				</form>
+							autofocus
+							aria-label="Current hour note"
+						/>
+					</form>
+				{:else}
+					<div class="mt-4">
+						<DayDots {entries} {circleClassFor} {rangeLabel} />
+					</div>
+				{/if}
 			{:else}
 				<div class="mt-2 flex w-full items-center gap-2">
 					<button
