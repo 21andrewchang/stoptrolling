@@ -28,6 +28,7 @@
 	const username = '21andrewch';
 	onMount(() => dayLog.ensure(date));
 	let showReview = $state(false);
+	$inspect(showReview);
 
 	function handleCloseModal() {
 		showReview = false;
