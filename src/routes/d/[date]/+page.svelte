@@ -1,9 +1,8 @@
 <script lang="ts">
-	import { browser } from '$app/environment';
 	import ReviewModal from '$lib/components/ReviewModal.svelte';
 	import { onMount, onDestroy } from 'svelte';
 	import { fly } from 'svelte/transition';
-	import { dayLog, type HourEntry, endHourOf } from '$lib/stores/day-log';
+	import { dayLog, type HourEntry, endHourOf, defaultHours } from '$lib/stores/day-log';
 	import { ymd, slotRange, minutesUntil, rangeLabel as labelFor } from '$lib/utils/time';
 	import { supabase } from '$lib/supabase';
 
@@ -39,9 +38,88 @@
 		}
 		return data.id;
 	}
+
+	type DbHourRow = {
+		start_hour: number;
+		body: string | null;
+		aligned: boolean | null;
+	};
+
+	async function loadDayFromDatabase(
+		id: string
+	): Promise<{ goal: string; hours: HourEntry[] } | null> {
+		try {
+			const [dayRes, hoursRes] = await Promise.all([
+				supabase.from('days').select('goal').eq('id', id).maybeSingle(),
+				supabase
+					.from('day_hours')
+					.select('start_hour, body, aligned')
+					.eq('day_id', id)
+					.order('start_hour', { ascending: true })
+			]);
+
+			if (dayRes.error) {
+				console.error('Supabase day load failed:', dayRes.error);
+				return null;
+			}
+			if (hoursRes.error) {
+				console.error('Supabase day_hours load failed:', hoursRes.error);
+				return null;
+			}
+
+			const goalFromDb = (dayRes.data?.goal ?? '') as string;
+			const rows = (hoursRes.data ?? []) as DbHourRow[];
+			const rowMap = new Map<number, DbHourRow>();
+			for (const row of rows) {
+				const startHour =
+					typeof row.start_hour === 'number' ? row.start_hour : Number(row.start_hour);
+				if (Number.isNaN(startHour)) continue;
+				rowMap.set(startHour, row);
+			}
+
+			const fallback = defaultHours();
+			const hours = fallback.map((slot) => {
+				const remote = rowMap.get(slot.startHour);
+				if (!remote) {
+					return { ...slot };
+				}
+
+				const entry: HourEntry = {
+					startHour: slot.startHour,
+					body: remote.body ?? ''
+				};
+
+				if (remote.aligned !== null && remote.aligned !== undefined) {
+					entry.aligned = remote.aligned;
+				}
+
+				return entry;
+			});
+
+			return { goal: goalFromDb, hours };
+		} catch (err) {
+			console.error('Failed to load day from Supabase:', err);
+			return null;
+		}
+	}
+
+	async function syncFromDatabase(): Promise<void> {
+		const id = await ensureDayId();
+		dayId = id;
+		if (!id) return;
+
+		const remote = await loadDayFromDatabase(id);
+		if (!remote) return;
+
+		console.log('Loaded day from database', { date, ...remote });
+		dayLog.replaceHours(date, remote.hours);
+		dayLog.setGoal(date, remote.goal);
+		console.log(remote.goal);
+	}
+
 	onMount(() => {
 		dayLog.ensure(date);
-		ensureDayId().then((id) => (dayId = id));
+		void syncFromDatabase();
 	});
 
 	// ---------- State ----------
@@ -199,13 +277,54 @@
 	let pendingIndex = $state<number | null>(null);
 	let pendingBody = $state<string | null>(null);
 
-	function onSubmit(e: SubmitEvent) {
+	async function onSubmit(e: SubmitEvent) {
 		e.preventDefault();
 		if (!isActiveSlot || editingIndex === null) return;
 
+		const idx = editingIndex;
+		const entry = entries[idx];
+		if (!entry) return;
+
 		const trimmed = currentBody.trim();
-		dayLog.patchHour(date, editingIndex, { body: trimmed });
-		reviewIndex = editingIndex;
+		const startHour = entry.startHour;
+		const aligned = entry.aligned ?? null;
+
+		let synced = false;
+
+		try {
+			if (!dayId) dayId = await ensureDayId();
+			if (!dayId) {
+				console.warn('No dayId available; storing note locally only.');
+			} else {
+				const { error } = await supabase.from('day_hours').upsert(
+					{
+						day_id: dayId,
+						start_hour: startHour,
+						body: trimmed,
+						aligned
+					},
+					{ onConflict: 'day_id,start_hour' }
+				);
+
+				if (error) {
+					throw error;
+				}
+				synced = true;
+			}
+		} catch (err) {
+			console.error('Supabase day_hours upsert failed:', err);
+		}
+
+		dayLog.patchHour(date, idx, { body: trimmed });
+		reviewIndex = idx;
+
+		if (!synced) {
+			pendingIndex = idx;
+			pendingBody = trimmed;
+		} else if (pendingIndex === idx) {
+			pendingIndex = null;
+			pendingBody = null;
+		}
 	}
 
 	async function recordAlignment(isAligned: boolean) {
@@ -216,34 +335,46 @@
 		const bodyToSave =
 			pendingIndex === idx && pendingBody !== null ? pendingBody : (entries[idx]?.body ?? '');
 
-		dayLog.patchHour(date, idx, { body: bodyToSave, aligned: isAligned });
+		const entry = entries[idx];
+		if (!entry) return;
 
-		if (pendingIndex === idx) {
-			pendingIndex = null;
-			pendingBody = null;
-		}
+		const startHour = entry.startHour;
 
-		// 2) DB persistence
+		let synced = false;
+
 		try {
 			if (!dayId) dayId = await ensureDayId();
-			if (dayId) {
-				const entry = entries[idx];
-				const payload = {
-					day_id: dayId,
-					start_hour: entry.startHour,
-					body: bodyToSave,
-					aligned: isAligned
-				};
-
-				const { error } = await supabase
-					.from('day_hours')
-					.upsert(payload, { onConflict: 'day_id,start_hour' });
-				if (error) console.error('Supabase day_hours upsert failed:', error);
+			if (!dayId) {
+				console.warn('No dayId available; skipping remote alignment upsert.');
 			} else {
-				console.warn('No dayId available; skipped remote upsert.');
+				const { error } = await supabase.from('day_hours').upsert(
+					{
+						day_id: dayId,
+						start_hour: startHour,
+						body: bodyToSave,
+						aligned: isAligned
+					},
+					{ onConflict: 'day_id,start_hour' }
+				);
+				if (error) {
+					throw error;
+				}
+				synced = true;
 			}
 		} catch (err) {
 			console.error('Supabase day_hours upsert exception:', err);
+		}
+
+		dayLog.patchHour(date, idx, { body: bodyToSave, aligned: isAligned });
+
+		if (synced) {
+			if (pendingIndex === idx) {
+				pendingIndex = null;
+				pendingBody = null;
+			}
+		} else {
+			pendingIndex = idx;
+			pendingBody = bodyToSave;
 		}
 
 		// advance UI
@@ -280,29 +411,24 @@
 	onClose={() => (showReview = false)}
 />
 
-{#if goal}
-	<header class="fixed top-4 left-6 z-10 text-stone-600">
-		<div
-			class="flex items-center gap-2 font-mono text-sm"
-			in:fly={{ y: 5, delay: 0, duration: 300 }}
-		>
-			<span class="font-semibold text-stone-800">{date.slice(5)}</span>
-			<span class="max-w-[50vw] truncate">{goal ? `I will ${goal}` : ''}</span>
-		</div>
+<header class="fixed top-4 left-6 z-10 text-stone-600">
+	<div class="flex items-center gap-2 font-mono text-sm" in:fly={{ y: 5, delay: 0, duration: 300 }}>
+		<span class="font-semibold text-stone-800">{date.slice(5)}</span>
+		<span class="max-w-[50vw] truncate">{goal ? `I will ${goal}` : ''}</span>
+	</div>
 
-		<div class="mt-2 flex flex-wrap items-center gap-1" aria-label="Hours" role="list">
-			{#each entries as entry, i}
-				<button
-					type="button"
-					in:fly|global={{ y: 5, delay: i * 30 + 100, duration: 300 }}
-					class={`h-3 w-3 rounded-full border ${circleClassFor(entry)} cursor-pointer outline-none`}
-					role="listitem"
-					aria-label={`${rangeLabel(entry)} — ${entry.body?.trim() ? entry.body.trim() : 'Trolling'}`}
-				/>
-			{/each}
-		</div>
-	</header>
-{/if}
+	<div class="mt-2 flex flex-wrap items-center gap-1" aria-label="Hours" role="list">
+		{#each entries as entry, i}
+			<button
+				type="button"
+				in:fly|global={{ y: 5, delay: i * 30 + 100, duration: 300 }}
+				class={`h-3 w-3 rounded-full border ${circleClassFor(entry)} cursor-pointer outline-none`}
+				role="listitem"
+				aria-label={`${rangeLabel(entry)} — ${entry.body?.trim() ? entry.body.trim() : 'Trolling'}`}
+			/>
+		{/each}
+	</div>
+</header>
 
 {#if username}
 	<header class="fixed top-4 right-6 z-10">
