@@ -24,7 +24,7 @@
 	{#each entries as entry, index (entry.startHour)}
 		{@const note = noteFor(entry)}
 		<span
-			in:fly|global={{ y: 8, delay: 20 * index, duration: 200 }}
+			in:fly|global={{ y: 8, delay: 20 * index, duration: 300 }}
 			class={`${sizeClass} rounded-full border ${circleClassFor(entry)} block`}
 			role="listitem"
 			aria-label={`${rangeLabel(entry)} — ${note || fallbackNote}`}

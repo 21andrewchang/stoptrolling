@@ -2,7 +2,7 @@
 	import ReviewModal from '$lib/components/ReviewModal.svelte';
 	import DayDots from '$lib/components/DayDots.svelte';
 	import { onMount, onDestroy } from 'svelte';
-	import { fly } from 'svelte/transition';
+	import { fly, fade } from 'svelte/transition';
 	import { dayLog, type HourEntry, endHourOf, defaultHours } from '$lib/stores/day-log';
 	import { ymd, slotRange, minutesUntil, rangeLabel as labelFor } from '$lib/utils/time';
 	import { supabase } from '$lib/supabase';
@@ -17,6 +17,7 @@
 	let firstName = $state<string | null>(null);
 	let userEmail = $state<string | null>(null);
 	let hasUser = $state(false);
+	let authResolved = $state(false);
 
 	function deriveFirstName(user: User): string | null {
 		const metadata = (user.user_metadata ?? {}) as Record<string, unknown>;
@@ -41,6 +42,10 @@
 		const { data: userRes, error: authErr } = await supabase.auth.getUser();
 		if (authErr) {
 			console.error('auth error', authErr);
+			firstName = null;
+			userEmail = null;
+			hasUser = false;
+			authResolved = true;
 			return null;
 		}
 		const user = userRes?.user ?? null;
@@ -49,12 +54,14 @@
 			firstName = null;
 			userEmail = null;
 			hasUser = false;
+			authResolved = true;
 			return null;
 		}
 
 		firstName = deriveFirstName(user);
 		userEmail = typeof user.email === 'string' ? user.email : null;
 		hasUser = true;
+		authResolved = true;
 
 		// Upsert the day row and return its id
 		const { data, error } = await supabase
@@ -458,48 +465,52 @@
 	onClose={() => (showReview = false)}
 />
 
-{#if goal}
+{#if goal && authResolved}
 	<header class="fixed top-4 left-6 z-10 text-stone-600">
-		<div
-			class="flex items-center gap-2 font-mono text-sm"
-			in:fly={{ y: 5, delay: 0, duration: 300 }}
-		>
+		<div class="flex items-center gap-2 font-mono text-sm">
 			<span class="font-semibold text-stone-800">{date.slice(5)}</span>
 			<span class="max-w-[50vw] truncate">{goal ? `I will ${goal}` : ''}</span>
 		</div>
 	</header>
-{/if}
 
-<header class="fixed top-4 right-6 z-10">
-	<button type="button" class="flex items-center gap-2" onclick={handleAuthButtonClick}>
-		<div class="text-stone-500">
-			<svg
-				width="20"
-				height="20"
-				viewBox="0 0 24 24"
-				fill="currentColor"
-				stroke="currentColor"
-				stroke-width="2"
-				stroke-linecap="round"
-				stroke-linejoin="round"
-				shape-rendering="geometricPrecision"
-				class="h-4 w-4 transition-colors duration-200"
-			>
-				<path d="M20 21.5v-2.5a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2.5h16" />
-				<circle cx="12" cy="7" r="4" />
-			</svg>
-		</div>
-		<span class="font-mono text-sm text-stone-500">
-			{#if firstName}
-				{firstName}
-			{:else if userEmail}
-				{userEmail}
-			{:else}
-				Sign In
-			{/if}
-		</span>
-	</button>
-</header>
+	<header class="fixed top-4 right-6 z-10">
+		<button
+			type="button"
+			class="flex items-center gap-2"
+			onclick={handleAuthButtonClick}
+			aria-label={authResolved
+				? (firstName ?? userEmail ?? 'Sign In')
+				: 'Loading account information'}
+		>
+			<div class="text-stone-500">
+				<svg
+					width="20"
+					height="20"
+					viewBox="0 0 24 24"
+					fill="currentColor"
+					stroke="currentColor"
+					stroke-width="2"
+					stroke-linecap="round"
+					stroke-linejoin="round"
+					shape-rendering="geometricPrecision"
+					class="h-4 w-4 transition-colors duration-200"
+				>
+					<path d="M20 21.5v-2.5a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2.5h16" />
+					<circle cx="12" cy="7" r="4" />
+				</svg>
+			</div>
+			<span class="font-mono text-sm text-stone-500">
+				{#if firstName}
+					{firstName}
+				{:else if userEmail}
+					{userEmail}
+				{:else}
+					Sign In
+				{/if}
+			</span>
+		</button>
+	</header>
+{/if}
 
 <div class="flex min-h-screen items-center justify-center bg-stone-50 px-6">
 	{#if !showReview}
@@ -507,9 +518,14 @@
 			<div class="flex items-center justify-between gap-4 text-stone-600">
 				<div class="flex items-center justify-between text-stone-600">
 					<div class="flex min-w-0 items-center gap-2">
-						<span class="font-mono text-lg tracking-widest">
-							{leadingText}
-						</span>
+						{#if leadingText}
+							<span
+								class="font-mono text-lg tracking-widest"
+								in:fly|global={{ y: 4, delay: 400, duration: 200 }}
+							>
+								{leadingText}
+							</span>
+						{/if}
 
 						{#if reviewIndex !== null && entries[reviewIndex]?.body?.trim()}
 							<span class="text-stone-300 select-none">•</span>
