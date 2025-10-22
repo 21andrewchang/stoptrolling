@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { supabase } from '$lib/supabase';
 	import { goto } from '$app/navigation';
 	import { dayLog } from '$lib/stores/day-log';
 	import { fade, scale } from 'svelte/transition';
@@ -33,13 +34,17 @@
 		try {
 			authLoading = true;
 			authError = '';
-			// TODO: plug in your provider login:
-			// await supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: '/...' }});
-			// For now simulate a redirect:
-			window.location.href = '/auth/google';
+
+			const redirectTo = `${window.location.origin}/d/${today}`;
+
+			const { error } = await supabase.auth.signInWithOAuth({
+				provider: 'google',
+				options: { redirectTo }
+			});
+
+			if (error) throw error; // browser will redirect on success
 		} catch (err: any) {
-			authError = err?.message ?? 'Something went wrong. Please try again.';
-		} finally {
+			authError = err?.message ?? 'Sign-in failed. Please try again.';
 			authLoading = false;
 		}
 	}
