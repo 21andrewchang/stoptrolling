@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { browser } from '$app/environment';
 	import { goto } from '$app/navigation';
 	import ReviewModal from '$lib/components/ReviewModal.svelte';
 	import { onMount, onDestroy } from 'svelte';
@@ -159,7 +160,17 @@
 	}
 
 	const dots = $derived(entries.map((e) => (e.aligned === undefined ? null : !!e.aligned)));
-	const badge = $derived(entries.filter((e) => e.aligned === true).length);
+	const TOTAL = 16;
+
+	// counts
+	const goodCount = $derived(entries.slice(0, TOTAL).filter((e) => e.aligned === true).length);
+	const badCount = $derived(entries.slice(0, TOTAL).filter((e) => e.aligned === false).length);
+
+	const rawScore = $derived(((goodCount + badCount) / 16) * 100 + goodCount * 10 - badCount * 5);
+	$inspect(rawScore);
+
+	const score = $derived(Math.max(0, Math.min(150, Math.round(rawScore))));
+	$inspect(score);
 
 	function recordAlignment(isAligned: boolean) {
 		if (reviewIndex === null) return;
@@ -262,13 +273,46 @@
 	const neutralPill = `${basePill} border border-stone-300 text-stone-700 hover:bg-stone-100`;
 
 	const activePill = `${basePill} bg-stone-900 text-white border border-stone-900`;
+
+	function isTypingTarget(el: EventTarget | null) {
+		const node = el as HTMLElement | null;
+		if (!node) return false;
+		const tag = node.tagName;
+		return tag === 'INPUT' || tag === 'TEXTAREA' || (node as any).isContentEditable === true;
+	}
+
+	function handleKeydown(e: KeyboardEvent) {
+		// only when reviewing
+		if (reviewIndex === null) return;
+		if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+		if (isTypingTarget(e.target)) return;
+
+		const k = e.key.toLowerCase();
+		if (k === 'h') {
+			e.preventDefault();
+			recordAlignment(true);
+		} else if (k === 'l') {
+			e.preventDefault();
+			recordAlignment(false);
+		}
+	}
+
+	onMount(() => {
+		if (!browser) return; // ✅ guard for SSR
+		window.addEventListener('keydown', handleKeydown);
+	});
+
+	onDestroy(() => {
+		if (!browser) return; // ✅ guard for SSR
+		window.removeEventListener('keydown', handleKeydown);
+	});
 </script>
 
 <ReviewModal
 	open={showReview}
 	{date}
 	{dots}
-	{badge}
+	{score}
 	siteLabel="stoptrolling.app"
 	onClose={handleCloseModal}
 />
@@ -398,22 +442,20 @@
 				<div class="mt-2 flex w-full items-center gap-2">
 					<button
 						type="button"
-						class={(aligned === true ? activePill : neutralPill) + ' h-14 flex-1 justify-center'}
+						class={activePill + ' h-12 flex-1 justify-between'}
 						onclick={() => recordAlignment(true)}
-						aria-pressed={aligned === true}
-						autofocus
 					>
-						<span class="text-lg">Good</span>
+						<span class="text-md rounded-md bg-stone-800 p-2 px-3 font-mono">h</span>
+						<span class="mr-25 self-center text-lg">Good</span>
 					</button>
 
 					<button
 						type="button"
-						class={(aligned === false ? activePill : neutralPill) +
-							' h-14 flex-1 justify-center text-xl'}
+						class={neutralPill + ' h-12 flex-1 justify-between text-xl'}
 						onclick={() => recordAlignment(false)}
-						aria-pressed={aligned === false}
 					>
-						<span class="text-lg">Bad</span>
+						<span class="text-md rounded-md bg-stone-200 p-2 px-3 font-mono">l</span>
+						<span class="mr-25 self-center text-lg">Bad</span>
 					</button>
 				</div>
 			{/if}
