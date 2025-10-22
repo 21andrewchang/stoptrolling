@@ -1,12 +1,20 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
+	import ReviewModal from '$lib/components/ReviewModal.svelte';
 	import { onMount, onDestroy } from 'svelte';
-	import { fly } from 'svelte/transition';
+	import { fly, blur } from 'svelte/transition';
 	import { dayLog, type HourEntry, endHourOf } from '$lib/stores/day-log';
 
 	let { data } = $props<{ data: { date: string } }>();
 	const { date } = data;
 
+	const username = '21andrewch';
 	onMount(() => dayLog.ensure(date));
+	let showReview = $state(false);
+
+	function handleCloseModal() {
+		showReview = false;
+	}
 
 	// store mirrors
 	let goal = $state('');
@@ -62,13 +70,12 @@
 		const { hour12: sH, meridiem: sM } = formatHour(start);
 		const { hour12: eH, meridiem: eM } = formatHour(end % 24);
 
-		// Same meridiem? Use a single suffix: "2–3PM"
-		// Different? Show both: "11AM–12PM"
 		return sM === eM ? `${sH}–${eH}${eM}` : `${sH}${sM}–${eH}${eM}`;
 	}
 
-	// current index from time window (08→24 by default)
+	let manualIndex = $state<number | null>(15);
 	let currentIndex = $state<number | null>(null);
+
 	$effect(() => {
 		if (!entries.length) {
 			currentIndex = null;
@@ -82,7 +89,8 @@
 		const START = entries[0].startHour,
 			SLOTS = entries.length,
 			h = now.getHours();
-		currentIndex = h >= START && h < START + SLOTS ? h - START : null;
+		// currentIndex = h >= START && h < START + SLOTS ? h - START : null;
+		currentIndex = manualIndex;
 	});
 
 	let editingIndex = $state<number | null>(null);
@@ -150,20 +158,21 @@
 		reviewIndex = editingIndex;
 	}
 
+	const dots = $derived(entries.map((e) => (e.aligned === undefined ? null : !!e.aligned)));
+	const badge = $derived(entries.filter((e) => e.aligned === true).length);
+
 	function recordAlignment(isAligned: boolean) {
 		if (reviewIndex === null) return;
-
 		const idx = reviewIndex;
 		dayLog.patchHour(date, idx, { aligned: isAligned });
-
-		// close review so pills reflect selection on this hour
 		reviewIndex = null;
 
-		// advance shortly after so the user *sees* the selection
-		setTimeout(() => {
-			const next = Math.min(idx + 1, entries.length - 1);
-			editingIndex = next;
-		}, 250);
+		const isLast = editingIndex === entries.length - 1;
+		if (isLast) {
+			showReview = true; // open modal
+			return;
+		}
+		editingIndex = Math.min(idx + 1, entries.length - 1);
 	}
 
 	let displayedEntry = $state<HourEntry | undefined>(undefined);
@@ -255,32 +264,65 @@
 	const activePill = `${basePill} bg-stone-900 text-white border border-stone-900`;
 </script>
 
-<!-- Small top-left header -->
-<header class="fixed top-4 left-6 z-10 text-stone-600">
-	<div class="flex items-center gap-2 font-mono text-sm">
-		<span class="font-semibold text-stone-800">{date}</span>
-		<span class="max-w-[50vw] truncate">{goal ? `Today, I will ${goal}` : 'No goal set'}</span>
-	</div>
-</header>
+<ReviewModal
+	open={showReview}
+	{date}
+	{dots}
+	{badge}
+	siteLabel="stoptrolling.app"
+	onClose={handleCloseModal}
+/>
+{#if goal}
+	<header class="fixed top-4 left-6 z-10 text-stone-600">
+		<div
+			in:fly={{ y: 5, delay: 0, duration: 300 }}
+			class="flex items-center gap-2 font-mono text-sm"
+		>
+			<span class="font-semibold text-stone-800">{date.slice(5)}</span>
+			<span class="max-w-[50vw] truncate">{goal ? `I will ${goal}` : ''}</span>
+		</div>
 
-<!-- Dots in the top-right WITH JS tooltip -->
-<aside class="fixed top-4 right-6 z-10">
-	<div class="flex flex-wrap items-center justify-end gap-2" aria-label="Hours" role="list">
-		{#each entries as entry, i}
-			<button
-				type="button"
-				in:fly|global={{ y: 5, delay: i * 30, duration: 300 }}
-				class={`h-2.5 w-2.5 rounded-full border ${circleClassFor(entry)} cursor-pointer outline-none`}
-				role="listitem"
-				aria-label={`${rangeLabel(entry)} — ${entry.body?.trim() ? entry.body.trim() : 'Trolling'}`}
-				onmouseenter={(e) => showDotTooltip(e, entry)}
-				onmouseleave={hideDotTooltip}
-				onfocus={(e) => showDotTooltip(e, entry)}
-				onblur={hideDotTooltip}
-			/>
-		{/each}
-	</div>
-</aside>
+		<div class="mt-2 flex flex-wrap items-center gap-2" aria-label="Hours" role="list">
+			{#each entries as entry, i}
+				<button
+					type="button"
+					in:fly|global={{ y: 5, delay: i * 30 + 100, duration: 300 }}
+					class={`h-2.5 w-2.5 rounded-full border ${circleClassFor(entry)} cursor-pointer outline-none`}
+					role="listitem"
+					aria-label={`${rangeLabel(entry)} — ${entry.body?.trim() ? entry.body.trim() : 'Trolling'}`}
+					onmouseenter={(e) => showDotTooltip(e, entry)}
+					onmouseleave={hideDotTooltip}
+					onfocus={(e) => showDotTooltip(e, entry)}
+					onblur={hideDotTooltip}
+				/>
+			{/each}
+		</div>
+	</header>
+{/if}
+{#if username}
+	<header class="fixed top-4 right-6 z-10">
+		<button class="flex items-center gap-2">
+			<div class="text-stone-500">
+				<svg
+					width="20"
+					height="20"
+					viewBox="0 0 24 24"
+					fill="currentColor"
+					stroke="currentColor"
+					stroke-width="2"
+					stroke-linecap="round"
+					stroke-linejoin="round"
+					shape-rendering="geometricPrecision"
+					class="h-4 w-4 transition-colors duration-200"
+				>
+					<path d="M20 21.5v-2.5a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2.5h16" />
+					<circle cx="12" cy="7" r="4" />
+				</svg>
+			</div>
+			<span class="font-mono text-sm text-stone-500">{username}</span>
+		</button>
+	</header>
+{/if}
 
 <div class="fixed bottom-4 left-6 z-50">
 	<button
@@ -295,89 +337,88 @@
 		Clear last hour
 	</button>
 </div>
-<!-- Center: editor shows the slot at editingIndex; disabled until its start -->
-<main class="flex min-h-screen items-center justify-center bg-stone-50 px-6">
-	<div class="w-full max-w-xl">
-		<div class="mb-2 flex items-center justify-between gap-4 text-stone-600">
-			<!-- Top row: dot + time + (during review) latest note -->
-			<div class="mb-2 flex items-center justify-between text-stone-600">
-				<div class="flex min-w-0 items-center gap-2">
-					<button
-						type="button"
-						class={`inline-block h-4 w-4 rounded-full border ${
-							displayedEntry
-								? circleClassFor(displayedEntry)
-								: 'border-dashed border-stone-400 bg-transparent'
-						}`}
-						onmouseenter={showCurrentTooltip}
-						onmouseleave={hideDotTooltip}
-						onfocus={showCurrentTooltip}
-						onblur={hideDotTooltip}
-						aria-label={displayedEntry ? `Status for ${rangeLabel(displayedEntry)}` : 'Status'}
-					/>
 
-					<!-- Time (always visible) -->
-					<span class="font-mono text-lg tracking-widest">
-						{displayedEntry ? rangeLabel(displayedEntry) : ''}
-					</span>
+<main
+	class="flex min-h-screen items-center justify-center bg-stone-50 px-6"
+	in:fly|global={{ y: 5, delay: 1000, duration: 300 }}
+>
+	{#if !showReview}
+		<div class="w-full max-w-xl">
+			<div class="flex items-center justify-between gap-4 text-stone-600">
+				<div class="flex items-center justify-between text-stone-600">
+					<div class="flex min-w-0 items-center gap-2">
+						<button
+							type="button"
+							class={`inline-block h-4 w-4 rounded-full border ${
+								displayedEntry
+									? circleClassFor(displayedEntry)
+									: 'border-dashed border-stone-400 bg-transparent'
+							}`}
+							onmouseenter={showCurrentTooltip}
+							onmouseleave={hideDotTooltip}
+							onfocus={showCurrentTooltip}
+							onblur={hideDotTooltip}
+							aria-label={displayedEntry ? `Status for ${rangeLabel(displayedEntry)}` : 'Status'}
+						/>
 
-					<!-- During review: show the just-submitted note right next to time -->
-					{#if reviewIndex !== null && entries[reviewIndex]?.body?.trim()}
-						<span class="text-stone-300 select-none">•</span>
-						<span
-							in:fly|global={{ y: 6, duration: 180 }}
-							class="truncate font-mono text-lg text-stone-800"
-							title={entries[reviewIndex].body}
-						>
-							{entries[reviewIndex].body}
+						<span class="font-mono text-lg tracking-widest">
+							{displayedEntry ? rangeLabel(displayedEntry) : ''}
 						</span>
-					{/if}
+
+						{#if reviewIndex !== null && entries[reviewIndex]?.body?.trim()}
+							<span class="text-stone-300 select-none">•</span>
+							<span
+								in:fly|global={{ y: 6, duration: 180 }}
+								class="truncate font-mono text-lg text-stone-800"
+								title={entries[reviewIndex].body}
+							>
+								{entries[reviewIndex].body}
+							</span>
+						{/if}
+					</div>
 				</div>
-
-				<!-- Right side left empty on purpose -->
-				<div />
 			</div>
-		</div>
 
-		{#if reviewIndex === null}
-			<form onsubmit={onSubmit} class="flex flex-row">
-				<input
-					type="text"
-					placeholder={placeholderStr}
-					value={currentBody}
-					oninput={onInput}
-					disabled={!isActiveSlot || !displayedEntry}
-					class="h-14 w-full border-none bg-transparent pr-2 pl-0 font-mono text-3xl font-light
+			{#if reviewIndex === null}
+				<form onsubmit={onSubmit} class="flex flex-row">
+					<input
+						type="text"
+						placeholder={placeholderStr}
+						value={currentBody}
+						oninput={onInput}
+						disabled={!isActiveSlot || !displayedEntry}
+						class="h-14 w-full border-none bg-transparent pr-2 pl-0 font-mono text-3xl font-light
          text-stone-900 ring-0 outline-none placeholder:text-stone-300
          focus:border-transparent focus:ring-0 focus:outline-none"
-					autofocus
-					aria-label="Current hour note"
-				/>
-			</form>
-		{:else}
-			<div class="mt-2 flex w-full items-center gap-2">
-				<button
-					type="button"
-					class={(aligned === true ? activePill : neutralPill) + ' h-14 flex-1 justify-center'}
-					onclick={() => recordAlignment(true)}
-					aria-pressed={aligned === true}
-					autofocus
-				>
-					<span class="text-lg">Good</span>
-				</button>
+						autofocus
+						aria-label="Current hour note"
+					/>
+				</form>
+			{:else}
+				<div class="mt-2 flex w-full items-center gap-2">
+					<button
+						type="button"
+						class={(aligned === true ? activePill : neutralPill) + ' h-14 flex-1 justify-center'}
+						onclick={() => recordAlignment(true)}
+						aria-pressed={aligned === true}
+						autofocus
+					>
+						<span class="text-lg">Good</span>
+					</button>
 
-				<button
-					type="button"
-					class={(aligned === false ? activePill : neutralPill) +
-						' h-14 flex-1 justify-center text-xl'}
-					onclick={() => recordAlignment(false)}
-					aria-pressed={aligned === false}
-				>
-					<span class="text-lg">Bad</span>
-				</button>
-			</div>
-		{/if}
-	</div>
+					<button
+						type="button"
+						class={(aligned === false ? activePill : neutralPill) +
+							' h-14 flex-1 justify-center text-xl'}
+						onclick={() => recordAlignment(false)}
+						aria-pressed={aligned === false}
+					>
+						<span class="text-lg">Bad</span>
+					</button>
+				</div>
+			{/if}
+		</div>
+	{/if}
 </main>
 
 {#if dotTooltip.show}

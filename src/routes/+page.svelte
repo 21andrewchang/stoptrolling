@@ -12,10 +12,9 @@
 	}
 	const today = todayYMD();
 
-	// Ensure a record exists and mirror goal into local state
 	let goalDraft = $state('');
 	$effect(() => {
-		dayLog.ensure(today); // creates { goal:'', hours:[...] } if missing
+		dayLog.ensure(today);
 		goalDraft = $dayLog[today]?.goal ?? '';
 	});
 
@@ -29,13 +28,10 @@
 </script>
 
 <main class="flex min-h-screen items-center justify-center bg-stone-50 px-6">
-	<div class="mx-auto w-full max-w-2xl">
-		<h1 class="text-left font-mono text-3xl font-semibold text-stone-900">
-			What is your goal for today?
-		</h1>
+	<div>
+		<h1 class="text-left font-mono text-3xl text-stone-900">What is your goal for today?</h1>
 
-		<form class="mt-6" on:submit={handleSubmit}>
-			<label class="sr-only" for="daily-goal">Daily goal</label>
+		<form class="mt-6" onsubmit={handleSubmit}>
 			<input
 				id="daily-goal"
 				type="text"
