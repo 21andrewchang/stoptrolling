@@ -256,16 +256,6 @@
 		}
 	}
 
-	function clearDay() {
-		if (!entries.length) return;
-		if (browser && !confirm('Clear all notes and reviews for this day?')) return;
-		for (let i = 0; i < entries.length; i++) {
-			dayLog.patchHour(date, i, { body: '', aligned: undefined });
-		}
-		reviewIndex = null;
-		editingIndex = 0;
-	}
-
 	// ---------- Styles ----------
 	const basePill =
 		'inline-flex items-center gap-1 rounded-md px-3 py-1 font-mono text-xs transition-colors focus-visible:outline-none';
@@ -338,17 +328,6 @@
 		</button>
 	</header>
 {/if}
-
-<div class="fixed bottom-4 left-6 z-50">
-	<button
-		type="button"
-		class="rounded border border-stone-300 bg-white px-3 py-1.5 font-mono text-xs text-stone-700 hover:bg-stone-100"
-		onclick={clearDay}
-		title="Clear all logged hours for this day"
-	>
-		Clear this day
-	</button>
-</div>
 
 <div class="flex min-h-screen items-center justify-center bg-stone-50 px-6">
 	{#if !showReview}
