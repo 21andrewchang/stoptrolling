@@ -1,50 +1,63 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
-	import { goto } from '$app/navigation';
 	import ReviewModal from '$lib/components/ReviewModal.svelte';
 	import { onMount, onDestroy } from 'svelte';
-	import { fly, blur } from 'svelte/transition';
+	import { fly } from 'svelte/transition';
 	import { dayLog, type HourEntry, endHourOf } from '$lib/stores/day-log';
-	import Toast from '$lib/components/Toast.svelte';
-	let toastOpen = false;
-	let msg = '';
-	let tone: 'neutral' | 'success' | 'warning' | 'danger' = 'neutral';
+	import { ymd, slotRange, minutesUntil, rangeLabel as labelFor } from '$lib/utils/time';
+	import { supabase } from '$lib/supabase';
 
-	function openToast() {
-		toastOpen = true;
-	}
-	function closeToast() {
-		toastOpen = false;
-	}
-
-	function notify(message: string, t: typeof tone = 'neutral', autoHide = 3000) {
-		msg = message;
-		tone = t;
-		toastOpen = true;
-	}
+	// ---------- Props ----------
 	let { data } = $props<{ data: { date: string } }>();
 	const { date } = data;
 
+	// ---------- Constants ----------
 	const username = '21andrewch';
-	onMount(() => dayLog.ensure(date));
-	let showReview = $state(false);
-	$inspect(showReview);
 
-	function handleCloseModal() {
-		showReview = false;
+	// ---------- Ensure store for date ----------
+	let dayId = $state<string | null>(null);
+
+	async function ensureDayId(): Promise<string | null> {
+		const { data: userRes, error: authErr } = await supabase.auth.getUser();
+		if (authErr) {
+			console.error('auth error', authErr);
+			return null;
+		}
+		const user_id = userRes?.user?.id;
+		if (!user_id) return null;
+
+		// Upsert the day row and return its id
+		const { data, error } = await supabase
+			.from('days')
+			.upsert({ user_id, date }, { onConflict: 'user_id,date' })
+			.select('id')
+			.single();
+
+		if (error) {
+			console.error('ensureDayId upsert failed:', error);
+			return null;
+		}
+		return data.id;
 	}
+	onMount(() => {
+		dayLog.ensure(date);
+		ensureDayId().then((id) => (dayId = id));
+	});
 
-	// store mirrors
+	// ---------- State ----------
+	let showReview = $state(false);
+
 	let goal = $state('');
 	let entries = $state<HourEntry[]>([]);
 	let now = $state(new Date());
+
+	// Mirror store -> local state
 	$effect(() => {
 		const rec = $dayLog[date];
 		goal = rec?.goal ?? '';
 		entries = rec?.hours ?? [];
 	});
 
-	// clock
 	let timer: ReturnType<typeof setInterval> | null = null;
 	onMount(() => {
 		timer = setInterval(() => (now = new Date()), 60_000);
@@ -53,66 +66,41 @@
 		if (timer) clearInterval(timer);
 	});
 
-	// helpers
-	function ymd(d: Date) {
-		const y = d.getFullYear();
-		const m = String(d.getMonth() + 1).padStart(2, '0');
-		const dd = String(d.getDate()).padStart(2, '0');
-		return `${y}-${m}-${dd}`;
-	}
-	function slotRange(startHour: number) {
-		const [y, m, d] = date.split('-').map((n: string) => parseInt(n, 10));
-		const start = new Date(y, m - 1, d, startHour, 0, 0, 0);
-		const end = new Date(y, m - 1, d, endHourOf(startHour), 0, 0, 0);
-		return { start, end };
-	}
-	type Visual = 'past' | 'current' | 'future';
-	function visualFor(entry: HourEntry): Visual {
-		const today = ymd(now);
-		if (date < today) return 'past';
-		if (date > today) return 'future';
-		const { start, end } = slotRange(entry.startHour);
-		const t = now.getTime();
-		if (t >= end.getTime()) return 'past';
-		if (t >= start.getTime() && t < end.getTime()) return 'current';
-		return 'future';
-	}
-	function formatHour(h: number) {
-		const hour12 = ((h + 11) % 12) + 1; // 0→12, 13→1, etc
-		const meridiem = h < 12 ? 'AM' : 'PM';
-		return { hour12, meridiem };
-	}
-	function rangeLabel(entry: HourEntry) {
-		const start = entry.startHour;
-		const end = endHourOf(start); // e.g. +1
-		const { hour12: sH, meridiem: sM } = formatHour(start);
-		const { hour12: eH, meridiem: eM } = formatHour(end % 24);
-
-		return sM === eM ? `${sH}–${eH}${eM}` : `${sH}${sM}–${eH}${eM}`;
-	}
-
-	let currentIndex = $state<number | null>(null);
-
-	$effect(() => {
-		if (!entries.length) {
-			currentIndex = null;
-			return;
-		}
-		const today = ymd(now);
-		if (date !== today) {
-			currentIndex = null;
-			return;
-		}
-		const START = entries[0].startHour,
-			SLOTS = entries.length,
-			h = now.getHours();
-		currentIndex = h >= START && h < START + SLOTS ? h - START : null;
-	});
+	const currentIndex = $derived(
+		(() => {
+			if (!entries.length) return null as number | null;
+			const today = ymd(now);
+			if (date !== today) return null;
+			const START = entries[0].startHour;
+			const SLOTS = entries.length;
+			const h = now.getHours();
+			return h >= START && h < START + SLOTS ? h - START : null;
+		})()
+	);
 
 	let editingIndex = $state<number | null>(null);
+	let reviewIndex = $state<number | null>(null);
 
 	$effect(() => {
-		if (currentIndex === null || entries.length === 0) {
+		if (entries.length === 0) {
+			editingIndex = null;
+			reviewIndex = null;
+			return;
+		}
+
+		const today = ymd(now);
+		if (date === today) {
+			const START = entries[0].startHour;
+			const h = now.getHours();
+			if (h < START) {
+				editingIndex = 0;
+				reviewIndex = null;
+				return;
+			}
+		}
+
+		// Regular path
+		if (currentIndex === null) {
 			editingIndex = null;
 			reviewIndex = null;
 			return;
@@ -129,7 +117,6 @@
 			return;
 		}
 
-		// Otherwise, target current (if empty) or next (if reviewed)
 		const target =
 			hasBody && reviewed ? Math.min(currentIndex + 1, entries.length - 1) : currentIndex;
 
@@ -137,31 +124,80 @@
 			editingIndex = target;
 		}
 
-		// If we moved away from current, make sure review UI is closed
 		if (editingIndex !== currentIndex) {
 			reviewIndex = null;
 		}
 	});
 
-	// minutes until the start of a given slot (>= 0)
-	function minutesUntilStart(startHour: number): number {
-		const { start } = slotRange(startHour);
-		const ms = start.getTime() - now.getTime();
-		return Math.max(0, Math.ceil(ms / 60000));
-	}
+	const displayedEntry = $derived<HourEntry | undefined>(
+		(() => (editingIndex !== null ? entries[editingIndex] : undefined))()
+	);
 
-	// input model (kept in sync with the displayed slot)
+	const isActiveSlot = $derived((() => editingIndex !== null && editingIndex === currentIndex)());
+
 	let currentBody = $state('');
 	$effect(() => {
 		currentBody = displayedEntry ? (displayedEntry.body ?? '') : '';
 	});
 
+	const placeholderStr = $derived(
+		(() => {
+			const e = displayedEntry;
+			if (!e) return '';
+			if (isActiveSlot) return 'What are you doing right now?';
+
+			const { start, end } = slotRange(date, e.startHour, endHourOf);
+			const tNow = now.getTime();
+			const today = ymd(now);
+
+			if (date > today) {
+				const mins = minutesUntil(start, now);
+				return mins === 0
+					? 'Almost time…'
+					: `Come back in ${mins} minute${mins === 1 ? '' : 's'}...`;
+			}
+			if (date < today) return 'This hour has passed';
+
+			if (tNow < start.getTime()) {
+				const mins = minutesUntil(start, now);
+				return mins === 0
+					? 'Almost time…'
+					: `Come back in ${mins} minute${mins === 1 ? '' : 's'}...`;
+			}
+			if (tNow >= end.getTime()) return 'This hour has passed';
+
+			return 'What are you doing right now?';
+		})()
+	);
+
+	// ---------- UI helpers ----------
+	function isFuture(entry: HourEntry): boolean {
+		const today = ymd(now);
+		if (date > today) return true; // viewing a future day
+		if (date < today) return false; // viewing a past day
+		// same day → compare to slot start
+		const { start } = slotRange(date, entry.startHour, endHourOf);
+		return now.getTime() < start.getTime();
+	}
+
+	function circleClassFor(entry: HourEntry): string {
+		const hasBody = !!entry.body && entry.body.trim().length > 0;
+		// all gray; fill if there's a note
+		const base = hasBody ? 'bg-stone-400 border-stone-400' : 'bg-transparent border-stone-400';
+		// dashed only for future
+		return isFuture(entry) ? `${base} border-dashed` : base;
+	}
+
+	function rangeLabel(entry: HourEntry): string {
+		return labelFor(entry.startHour, endHourOf);
+	}
+
 	function onInput(e: Event) {
 		currentBody = (e.currentTarget as HTMLInputElement).value;
 	}
 
-	// below onSubmit, add this state:
-	let reviewIndex = $state<number | null>(null);
+	let pendingIndex = $state<number | null>(null);
+	let pendingBody = $state<string | null>(null);
 
 	function onSubmit(e: SubmitEvent) {
 		e.preventDefault();
@@ -169,158 +205,80 @@
 
 		const trimmed = currentBody.trim();
 		dayLog.patchHour(date, editingIndex, { body: trimmed });
-
-		// enter review mode for this slot
 		reviewIndex = editingIndex;
 	}
 
-	const dots = $derived(entries.map((e) => (e.aligned === undefined ? null : !!e.aligned)));
-	const TOTAL = 16;
-
-	// counts
-	const goodCount = $derived(entries.slice(0, TOTAL).filter((e) => e.aligned === true).length);
-	const badCount = $derived(entries.slice(0, TOTAL).filter((e) => e.aligned === false).length);
-
-	const rawScore = $derived(((goodCount + badCount) / 16) * 100 + goodCount * 3 - badCount * 2);
-	$inspect(rawScore);
-
-	const score = $derived(Math.max(0, Math.min(150, Math.round(rawScore))));
-	$inspect(score);
-
-	function recordAlignment(isAligned: boolean) {
+	async function recordAlignment(isAligned: boolean) {
 		if (reviewIndex === null) return;
 		const idx = reviewIndex;
-		dayLog.patchHour(date, idx, { aligned: isAligned });
-		reviewIndex = null;
 
+		// choose the body: staged input if this is the same slot, otherwise existing text
+		const bodyToSave =
+			pendingIndex === idx && pendingBody !== null ? pendingBody : (entries[idx]?.body ?? '');
+
+		dayLog.patchHour(date, idx, { body: bodyToSave, aligned: isAligned });
+
+		if (pendingIndex === idx) {
+			pendingIndex = null;
+			pendingBody = null;
+		}
+
+		// 2) DB persistence
+		try {
+			if (!dayId) dayId = await ensureDayId();
+			if (dayId) {
+				const entry = entries[idx];
+				const payload = {
+					day_id: dayId,
+					start_hour: entry.startHour,
+					body: bodyToSave,
+					aligned: isAligned
+				};
+
+				const { error } = await supabase
+					.from('day_hours')
+					.upsert(payload, { onConflict: 'day_id,start_hour' });
+				if (error) console.error('Supabase day_hours upsert failed:', error);
+			} else {
+				console.warn('No dayId available; skipped remote upsert.');
+			}
+		} catch (err) {
+			console.error('Supabase day_hours upsert exception:', err);
+		}
+
+		// advance UI
+		reviewIndex = null;
 		const isLast = editingIndex === entries.length - 1;
 		if (isLast) {
-			showReview = true; // open modal
-			return;
-		}
-		editingIndex = Math.min(idx + 1, entries.length - 1);
-	}
-
-	let displayedEntry = $state<HourEntry | undefined>(undefined);
-	let isActiveSlot = $state(false);
-	let placeholderStr = $state('');
-
-	$effect(() => {
-		displayedEntry = editingIndex !== null ? entries[editingIndex] : undefined;
-		isActiveSlot = editingIndex !== null && editingIndex === currentIndex;
-
-		if (!displayedEntry) {
-			placeholderStr = '';
-			return;
-		}
-
-		if (isActiveSlot) {
-			placeholderStr = 'What are you doing right now?';
-			return;
-		}
-
-		// Not the active slot: choose message based on time relation
-		const rel = visualFor(displayedEntry);
-		if (rel === 'future') {
-			const mins = minutesUntilStart(displayedEntry.startHour);
-			placeholderStr =
-				mins === 0 ? 'Almost time…' : `Come back in ${mins} minute${mins === 1 ? '' : 's'}...`;
+			showReview = true;
 		} else {
-			// past
-			placeholderStr = 'This hour has passed';
+			editingIndex = Math.min(idx + 1, entries.length - 1);
 		}
-	});
-
-	// dot styles
-	function circleClassFor(entry: HourEntry): string {
-		const v = visualFor(entry);
-		const hasBody = !!entry.body && entry.body.trim().length > 0;
-		if (v === 'future') return 'bg-transparent border-stone-400 border-dashed';
-		if (v === 'current')
-			return hasBody ? 'bg-stone-900 border-stone-900' : 'bg-stone-50 border-stone-900';
-		// past
-		return hasBody ? 'bg-stone-400 border-stone-400' : 'bg-transparent border-stone-400';
 	}
 
-	function clearHour(index: number) {
-		if (index < 0 || index >= entries.length) return;
-		dayLog.patchHour(date, index, { body: '', aligned: undefined });
-		if (reviewIndex === index) reviewIndex = null;
-	}
-	function lastLoggedIndex(): number {
-		for (let i = entries.length - 1; i >= 0; i--) {
-			if (entries[i]?.body?.trim()) return i;
+	function clearDay() {
+		if (!entries.length) return;
+		if (browser && !confirm('Clear all notes and reviews for this day?')) return;
+		for (let i = 0; i < entries.length; i++) {
+			dayLog.patchHour(date, i, { body: '', aligned: undefined });
 		}
-		return -1;
+		reviewIndex = null;
+		editingIndex = 0;
 	}
 
-	type DotTip = { show: boolean; x: number; y: number; when: string; note: string };
-	let dotTooltip = $state<DotTip>({ show: false, x: 0, y: 0, when: '', note: '' });
-
-	function showDotTooltip(event: MouseEvent | FocusEvent, entry: HourEntry) {
-		const target = event.currentTarget as HTMLElement | null;
-		if (!target) return;
-		const rect = target.getBoundingClientRect();
-		dotTooltip = {
-			show: true,
-			x: rect.left + rect.width / 2,
-			y: rect.bottom + 10,
-			when: rangeLabel(entry),
-			note: entry.body?.trim() ? entry.body.trim() : 'Trolling'
-		};
-	}
-	function hideDotTooltip() {
-		dotTooltip.show = false;
-	}
-	function showCurrentTooltip(event: MouseEvent | FocusEvent) {
-		if (currentIndex === null) return;
-		const entry = entries[currentIndex];
-		showDotTooltip(event, entry);
-	}
-
-	const aligned = $derived(
-		reviewIndex !== null ? entries[reviewIndex]?.aligned : displayedEntry?.aligned
-	);
-
+	// ---------- Styles ----------
 	const basePill =
 		'inline-flex items-center gap-1 rounded-md px-3 py-1 font-mono text-xs transition-colors focus-visible:outline-none';
-
 	const neutralPill = `${basePill} border border-stone-300 text-stone-700 hover:bg-stone-100`;
-
 	const activePill = `${basePill} bg-stone-900 text-white border border-stone-900`;
 
-	function isTypingTarget(el: EventTarget | null) {
-		const node = el as HTMLElement | null;
-		if (!node) return false;
-		const tag = node.tagName;
-		return tag === 'INPUT' || tag === 'TEXTAREA' || (node as any).isContentEditable === true;
-	}
-
-	function handleKeydown(e: KeyboardEvent) {
-		// only when reviewing
-		if (reviewIndex === null) return;
-		if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
-		if (isTypingTarget(e.target)) return;
-
-		const k = e.key.toLowerCase();
-		if (k === 'h') {
-			e.preventDefault();
-			recordAlignment(true);
-		} else if (k === 'l') {
-			e.preventDefault();
-			recordAlignment(false);
-		}
-	}
-
-	onMount(() => {
-		if (!browser) return; // ✅ guard for SSR
-		window.addEventListener('keydown', handleKeydown);
-	});
-
-	onDestroy(() => {
-		if (!browser) return; // ✅ guard for SSR
-		window.removeEventListener('keydown', handleKeydown);
-	});
+	// ---------- Score ----------
+	const dots = $derived(entries.map((e) => (e.aligned === undefined ? null : !!e.aligned)));
+	const TOTAL = 16;
+	const goodCount = $derived(entries.slice(0, TOTAL).filter((e) => e.aligned === true).length);
+	const badCount = $derived(entries.slice(0, TOTAL).filter((e) => e.aligned === false).length);
+	const rawScore = $derived(((goodCount + badCount) / 16) * 100 + goodCount * 3 - badCount * 2);
+	const score = $derived(Math.max(0, Math.min(150, Math.round(rawScore))));
 </script>
 
 <ReviewModal
@@ -329,13 +287,14 @@
 	{dots}
 	{score}
 	siteLabel="stoptrolling.app"
-	onClose={handleCloseModal}
+	onClose={() => (showReview = false)}
 />
+
 {#if goal}
 	<header class="fixed top-4 left-6 z-10 text-stone-600">
 		<div
-			in:fly={{ y: 5, delay: 0, duration: 300 }}
 			class="flex items-center gap-2 font-mono text-sm"
+			in:fly={{ y: 5, delay: 0, duration: 300 }}
 		>
 			<span class="font-semibold text-stone-800">{date.slice(5)}</span>
 			<span class="max-w-[50vw] truncate">{goal ? `I will ${goal}` : ''}</span>
@@ -349,15 +308,12 @@
 					class={`h-3 w-3 rounded-full border ${circleClassFor(entry)} cursor-pointer outline-none`}
 					role="listitem"
 					aria-label={`${rangeLabel(entry)} — ${entry.body?.trim() ? entry.body.trim() : 'Trolling'}`}
-					onmouseenter={(e) => showDotTooltip(e, entry)}
-					onmouseleave={hideDotTooltip}
-					onfocus={(e) => showDotTooltip(e, entry)}
-					onblur={hideDotTooltip}
 				/>
 			{/each}
 		</div>
 	</header>
 {/if}
+
 {#if username}
 	<header class="fixed top-4 right-6 z-10">
 		<button class="flex items-center gap-2">
@@ -387,20 +343,14 @@
 	<button
 		type="button"
 		class="rounded border border-stone-300 bg-white px-3 py-1.5 font-mono text-xs text-stone-700 hover:bg-stone-100"
-		onclick={() => {
-			const i = lastLoggedIndex();
-			if (i >= 0) clearHour(i);
-		}}
-		title="Clear the most recent logged hour"
+		onclick={clearDay}
+		title="Clear all logged hours for this day"
 	>
-		Clear last hour
+		Clear this day
 	</button>
 </div>
 
-<main
-	class="flex min-h-screen items-center justify-center bg-stone-50 px-6"
-	in:fly|global={{ y: 5, delay: 1000, duration: 300 }}
->
+<div class="flex min-h-screen items-center justify-center bg-stone-50 px-6">
 	{#if !showReview}
 		<div class="w-full max-w-xl">
 			<div class="flex items-center justify-between gap-4 text-stone-600">
@@ -413,8 +363,8 @@
 						{#if reviewIndex !== null && entries[reviewIndex]?.body?.trim()}
 							<span class="text-stone-300 select-none">•</span>
 							<span
-								in:fly|global={{ y: 6, duration: 180 }}
 								class="truncate font-mono text-lg text-stone-800"
+								in:fly={{ y: 6, duration: 180 }}
 								title={entries[reviewIndex].body}
 							>
 								{entries[reviewIndex].body}
@@ -433,8 +383,8 @@
 						oninput={onInput}
 						disabled={!isActiveSlot || !displayedEntry}
 						class="h-14 w-full border-none bg-transparent pr-2 pl-0 font-mono text-3xl font-light
-         text-stone-900 ring-0 outline-none placeholder:text-stone-300
-         focus:border-transparent focus:ring-0 focus:outline-none"
+                   text-stone-900 ring-0 outline-none placeholder:text-stone-300
+                   focus:border-transparent focus:ring-0 focus:outline-none"
 						autofocus
 						aria-label="Current hour note"
 					/>
@@ -443,40 +393,21 @@
 				<div class="mt-2 flex w-full items-center gap-2">
 					<button
 						type="button"
-						class={activePill + ' h-12 flex-1 justify-between'}
+						class={activePill + ' h-12 flex-1 justify-center'}
 						onclick={() => recordAlignment(true)}
 					>
-						<span class="text-md rounded-md bg-stone-800 p-2 px-3 font-mono">h</span>
-						<span class="mr-25 self-center text-lg">Good</span>
+						<span class="self-center text-lg">Good</span>
 					</button>
 
 					<button
 						type="button"
-						class={neutralPill + ' h-12 flex-1 justify-between text-xl'}
+						class={neutralPill + ' h-12 flex-1 justify-center text-xl'}
 						onclick={() => recordAlignment(false)}
 					>
-						<span class="text-md rounded-md bg-stone-200 p-2 px-3 font-mono">l</span>
-						<span class="mr-25 self-center text-lg">Bad</span>
+						<span class="self-center text-lg">Bad</span>
 					</button>
 				</div>
 			{/if}
 		</div>
 	{/if}
-</main>
-
-{#if dotTooltip.show}
-	<div
-		class="pointer-events-none fixed z-50 rounded-md border border-stone-200 bg-white px-3 py-2 text-xs text-stone-900 shadow-xl transition-transform duration-150"
-		style="
-      left: {dotTooltip.x}px;
-      top: {dotTooltip.y}px;
-      transform: translateX(-50%);
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
-      white-space: nowrap;
-    "
-		role="tooltip"
-	>
-		<div class="font-mono text-[11px] text-stone-500">{dotTooltip.when}</div>
-		<div class="mt-1 text-[13px]">{dotTooltip.note}</div>
-	</div>
-{/if}
+</div>
