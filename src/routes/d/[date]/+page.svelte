@@ -465,7 +465,7 @@
 	onClose={() => (showReview = false)}
 />
 
-{#if goal && authResolved}
+{#if authResolved}
 	<header class="fixed top-4 left-6 z-10 text-stone-600">
 		<div class="flex items-center gap-2 font-mono text-sm">
 			<span class="font-semibold text-stone-800">{date.slice(5)}</span>
