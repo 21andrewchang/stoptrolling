@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Toast from '$lib/components/Toast.svelte';
 	import { fly, blur } from 'svelte/transition';
 	import { onMount } from 'svelte';
 
@@ -18,9 +19,26 @@
 		onClose?: () => void;
 	}>();
 
+	let toastOpen = $state(false);
+	let msg = $state('');
+	let tone: 'neutral' | 'success' | 'warning' | 'danger' = 'neutral';
+
+	function openToast() {
+		toastOpen = true;
+	}
+	function closeToast() {
+		toastOpen = false;
+	}
+
+	function notify(message: string, t: typeof tone = 'neutral', autoHide = 3000) {
+		msg = message;
+		tone = t;
+		toastOpen = true;
+	}
 	let cardEl: HTMLElement | null = null;
 
 	async function copySummary() {
+		notify('Summary has been saved to clipboard', 'success');
 		try {
 			const total = dots.length || 0;
 			const good = dots.filter((d) => d === true).length;
@@ -28,19 +46,18 @@
 
 			const line = dots.map((d) => (d === true ? '🟢' : d === false ? '🔴' : '⚪')).join('');
 
-			const text = `${date || 'today'} | Score: ${score}\n${line} | stoptrolling.app`;
+			const text = `${date || 'today'} | Score: ${score} | stoptrolling.app\n${line} `;
 
 			await navigator.clipboard.writeText(text);
-			// optional: set a "copied = true" state for a toast
 		} catch (e) {
 			console.error('Copy failed', e);
 		}
 	}
 
 	async function screenshot() {
+		notify('Screenshot has been saved to clipboard', 'success');
 		if (!cardEl || typeof window === 'undefined') return;
 
-		// dynamic import avoids SSR issues
 		const { toBlob, toPng } = await import('html-to-image');
 
 		const opts = {
@@ -88,8 +105,9 @@
 		class="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-stone-50/80 backdrop-blur-sm"
 		transition:blur={{ duration: 200 }}
 	>
+		<Toast open={toastOpen} message={msg} {tone} autoHide={3000} onClose={closeToast} />
 		<div aria-modal="true" class="mx-4 rounded-2xl">
-			<div bind:this={cardEl} class="relative h-full w-full p-10">
+			<div bind:this={cardEl} class="relative h-full w-full p-2">
 				<div
 					class="flex flex-row justify-between"
 					transition:fly={{ y: 10, delay: 200, duration: 200 }}
@@ -124,71 +142,73 @@
 					{siteLabel}
 				</div>
 			</div>
-		</div>
-		<div class="flex gap-2">
-			<button
-				type="button"
-				class="flex rounded-md p-2 text-stone-600 transition hover:bg-stone-200/50 focus:ring-2 focus:ring-stone-400 focus:outline-none"
-				onclick={screenshot}
-			>
-				<svg
-					width="18"
-					height="18"
-					viewBox="0 0 24 24"
-					fill="none"
-					stroke="currentColor"
-					stroke-width="2"
-					stroke-linecap="round"
-					stroke-linejoin="round"
-				>
-					<path
-						d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h3l2-3h8l2 3h3a2 2 0 0 1 2 2z"
-					/>
-					<circle cx="12" cy="13" r="4" />
-				</svg>
-			</button>
-			<button
-				type="button"
-				class="flex rounded-md bg-stone-50 p-2 text-stone-600 transition hover:bg-stone-200/50 focus:ring-2 focus:ring-stone-400 focus:outline-none"
-				onclick={copySummary}
-			>
-				<svg
-					width="18"
-					height="18"
-					viewBox="0 0 24 24"
-					fill="#FAFAF9"
-					stroke="currentColor"
-					stroke-width="2"
-					stroke-linecap="round"
-					stroke-linejoin="round"
-				>
-					<rect x="9" y="9" width="13" height="13" rx="2" />
-					<rect x="3" y="3" width="13" height="13" rx="2" />
-				</svg>
-			</button>
-			<button
-				type="button"
-				class="inline-flex items-center gap-2 rounded-md bg-stone-50 p-2
+			<div class="flex w-full justify-between">
+				<div class="flex flex-row gap-2">
+					<button
+						type="button"
+						class="flex rounded-md p-2 text-stone-600 transition hover:bg-stone-200/50 focus:ring-2 focus:ring-stone-400 focus:outline-none"
+						onclick={screenshot}
+					>
+						<svg
+							width="18"
+							height="18"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+						>
+							<path
+								d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h3l2-3h8l2 3h3a2 2 0 0 1 2 2z"
+							/>
+							<circle cx="12" cy="13" r="4" />
+						</svg>
+					</button>
+					<button
+						type="button"
+						class="flex rounded-md bg-stone-50 p-2 text-stone-600 transition hover:bg-stone-200/50 focus:ring-2 focus:ring-stone-400 focus:outline-none"
+						onclick={copySummary}
+					>
+						<svg
+							width="18"
+							height="18"
+							viewBox="0 0 24 24"
+							fill="#FAFAF9"
+							stroke="currentColor"
+							stroke-width="2"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+						>
+							<rect x="9" y="9" width="13" height="13" rx="2" />
+							<rect x="3" y="3" width="13" height="13" rx="2" />
+						</svg>
+					</button>
+				</div>
+				<button
+					type="button"
+					class="inline-flex items-center gap-2 rounded-md bg-stone-50 p-2
            font-mono text-xs text-stone-700 transition hover:bg-stone-200/50 focus:ring-2
            focus:ring-stone-400 focus:outline-none"
-				onclick={close}
-				aria-label="Continue"
-				title="Continue"
-			>
-				<svg
-					width="18"
-					height="18"
-					viewBox="0 0 24 24"
-					fill="none"
-					stroke="currentColor"
-					stroke-width="2"
-					stroke-linecap="round"
-					stroke-linejoin="round"
-					aria-hidden="true"
+					onclick={close}
+					aria-label="Continue"
+					title="Continue"
 				>
-					<path d="M9 18l6-6-6-6" />
-				</svg>
-			</button>
+					<svg
+						width="18"
+						height="18"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						aria-hidden="true"
+					>
+						<path d="M9 18l6-6-6-6" />
+					</svg>
+				</button>
+			</div>
 		</div>
 	</div>
 {/if}

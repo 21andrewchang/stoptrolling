@@ -5,7 +5,23 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { fly, blur } from 'svelte/transition';
 	import { dayLog, type HourEntry, endHourOf } from '$lib/stores/day-log';
+	import Toast from '$lib/components/Toast.svelte';
+	let toastOpen = false;
+	let msg = '';
+	let tone: 'neutral' | 'success' | 'warning' | 'danger' = 'neutral';
 
+	function openToast() {
+		toastOpen = true;
+	}
+	function closeToast() {
+		toastOpen = false;
+	}
+
+	function notify(message: string, t: typeof tone = 'neutral', autoHide = 3000) {
+		msg = message;
+		tone = t;
+		toastOpen = true;
+	}
 	let { data } = $props<{ data: { date: string } }>();
 	const { date } = data;
 
@@ -74,7 +90,6 @@
 		return sM === eM ? `${sH}–${eH}${eM}` : `${sH}${sM}–${eH}${eM}`;
 	}
 
-	let manualIndex = $state<number | null>(15);
 	let currentIndex = $state<number | null>(null);
 
 	$effect(() => {
@@ -90,8 +105,7 @@
 		const START = entries[0].startHour,
 			SLOTS = entries.length,
 			h = now.getHours();
-		// currentIndex = h >= START && h < START + SLOTS ? h - START : null;
-		currentIndex = manualIndex;
+		currentIndex = h >= START && h < START + SLOTS ? h - START : null;
 	});
 
 	let editingIndex = $state<number | null>(null);
@@ -166,7 +180,7 @@
 	const goodCount = $derived(entries.slice(0, TOTAL).filter((e) => e.aligned === true).length);
 	const badCount = $derived(entries.slice(0, TOTAL).filter((e) => e.aligned === false).length);
 
-	const rawScore = $derived(((goodCount + badCount) / 16) * 100 + goodCount * 10 - badCount * 5);
+	const rawScore = $derived(((goodCount + badCount) / 16) * 100 + goodCount * 3 - badCount * 2);
 	$inspect(rawScore);
 
 	const score = $derived(Math.max(0, Math.min(150, Math.round(rawScore))));
@@ -326,12 +340,12 @@
 			<span class="max-w-[50vw] truncate">{goal ? `I will ${goal}` : ''}</span>
 		</div>
 
-		<div class="mt-2 flex flex-wrap items-center gap-2" aria-label="Hours" role="list">
+		<div class="mt-2 flex flex-wrap items-center gap-1" aria-label="Hours" role="list">
 			{#each entries as entry, i}
 				<button
 					type="button"
 					in:fly|global={{ y: 5, delay: i * 30 + 100, duration: 300 }}
-					class={`h-2.5 w-2.5 rounded-full border ${circleClassFor(entry)} cursor-pointer outline-none`}
+					class={`h-3 w-3 rounded-full border ${circleClassFor(entry)} cursor-pointer outline-none`}
 					role="listitem"
 					aria-label={`${rangeLabel(entry)} — ${entry.body?.trim() ? entry.body.trim() : 'Trolling'}`}
 					onmouseenter={(e) => showDotTooltip(e, entry)}
@@ -391,20 +405,6 @@
 			<div class="flex items-center justify-between gap-4 text-stone-600">
 				<div class="flex items-center justify-between text-stone-600">
 					<div class="flex min-w-0 items-center gap-2">
-						<button
-							type="button"
-							class={`inline-block h-4 w-4 rounded-full border ${
-								displayedEntry
-									? circleClassFor(displayedEntry)
-									: 'border-dashed border-stone-400 bg-transparent'
-							}`}
-							onmouseenter={showCurrentTooltip}
-							onmouseleave={hideDotTooltip}
-							onfocus={showCurrentTooltip}
-							onblur={hideDotTooltip}
-							aria-label={displayedEntry ? `Status for ${rangeLabel(displayedEntry)}` : 'Status'}
-						/>
-
 						<span class="font-mono text-lg tracking-widest">
 							{displayedEntry ? rangeLabel(displayedEntry) : ''}
 						</span>
