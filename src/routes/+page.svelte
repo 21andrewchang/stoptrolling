@@ -16,6 +16,7 @@
 	let hasUser = $state(false);
 	let authResolved = $state(false);
 	let showAuthModal = $state(false);
+	let showHIWModal = $state(false);
 	let authLoading = $state(false);
 	let authError = $state('');
 
@@ -175,6 +176,12 @@
 		authError = '';
 		showAuthModal = true;
 	}
+	function openHIWModal() {
+		showHIWModal = true;
+	}
+	function closeHIWModal() {
+		showHIWModal = false;
+	}
 
 	function closeAuthModal() {
 		if (authLoading) return;
@@ -236,7 +243,6 @@
 			return h >= START && h < START + SLOTS ? h - START : null;
 		})()
 	);
-
 	let editingIndex = $state<number | null>(null);
 	let reviewIndex = $state<number | null>(null);
 
@@ -486,9 +492,9 @@
 />
 
 {#if authResolved}
-	<header class="fixed top-4 left-6 z-10 text-stone-600">
+	<header class="fixed top-4 left-6 z-10">
 		<div class="flex items-center gap-2 font-mono text-sm">
-			<span class="font-semibold text-stone-800">{date.slice(5)}</span>
+			<span class="font-semibold text-stone-500">{date.slice(5)}</span>
 			<span
 				class="max-w-[50vw] truncate"
 				transition:fly|global={{ y: 4, delay: 400, duration: 200 }}
@@ -497,7 +503,13 @@
 		</div>
 	</header>
 
-	<header class="fixed top-4 right-6 z-10">
+	<header class="fixed top-4 right-6 z-10 flex flex-row items-center gap-6">
+		{#if !hasUser}
+			<button type="button" class="flex items-center" onclick={openHIWModal}>
+				<span class="font-mono text-sm tracking-tighter text-stone-500">How it works</span>
+			</button>
+		{/if}
+
 		<button
 			type="button"
 			class="flex items-center gap-2"
@@ -506,30 +518,27 @@
 				? (firstName ?? userEmail ?? 'Sign In')
 				: 'Loading account information'}
 		>
-			<div class="text-stone-500">
-				<svg
-					width="20"
-					height="20"
-					viewBox="0 0 24 24"
-					fill="currentColor"
-					stroke="currentColor"
-					stroke-width="2"
-					stroke-linecap="round"
-					stroke-linejoin="round"
-					shape-rendering="geometricPrecision"
-					class="h-4 w-4 transition-colors duration-200"
-				>
-					<path d="M20 21.5v-2.5a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2.5h16" />
-					<circle cx="12" cy="7" r="4" />
-				</svg>
-			</div>
-			<span class="font-mono text-sm text-stone-500">
+			<span class="font-mono text-sm tracking-tighter text-stone-500">
 				{#if firstName}
 					{firstName}
 				{:else if userEmail}
 					{userEmail}
 				{:else}
-					Sign In
+					<svg
+						width="20"
+						height="20"
+						viewBox="0 0 24 24"
+						fill="currentColor"
+						stroke="currentColor"
+						stroke-width="2"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						shape-rendering="geometricPrecision"
+						class="h-4 w-4 transition-colors duration-200"
+					>
+						<path d="M20 21.5v-2.5a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2.5h16" />
+						<circle cx="12" cy="7" r="4" />
+					</svg>
 				{/if}
 			</span>
 		</button>
@@ -552,7 +561,7 @@
 						{/if}
 
 						{#if reviewIndex !== null && entries[reviewIndex]?.body?.trim()}
-							<span class="select-none text-stone-300">•</span>
+							<span class="text-stone-300 select-none">•</span>
 							<span
 								class="truncate font-mono text-lg text-stone-800"
 								in:fly={{ y: 6, duration: 180 }}
@@ -609,6 +618,69 @@
 	{/if}
 </div>
 
+{#if showHIWModal}
+	<div
+		in:fade={{ duration: 200 }}
+		class="fixed inset-0 z-[120] flex items-center justify-center bg-stone-50"
+		role="dialog"
+		aria-modal="true"
+		aria-label="Sign in"
+		tabindex="-1"
+		onclick={(e) => {
+			if (!authLoading && e.target === e.currentTarget) closeHIWModal();
+		}}
+		onkeydown={(e) => {
+			if (!authLoading && e.key === 'Escape') closeHIWModal();
+		}}
+	>
+		<div
+			in:scale={{ start: 0.96, duration: 180 }}
+			class="w-full max-w-sm rounded-3xl p-6 text-stone-800"
+			role="document"
+		>
+			<div class="flex items-center justify-between">
+				<div class="text-sm font-semibold tracking-tight text-stone-900">Sign in</div>
+				<button
+					type="button"
+					class="rounded-full p-1 text-stone-500 hover:text-stone-800"
+					onclick={closeHIWModal}
+					aria-label="Close sign in"
+					{...{ disabled: authLoading } as any}
+				>
+					<svg
+						viewBox="0 0 24 24"
+						class="h-4 w-4"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+					>
+						<path d="M6 6l12 12M6 18L18 6" stroke-linecap="round" />
+					</svg>
+				</button>
+			</div>
+
+			<button
+				type="button"
+				onclick={signInWithTwitter}
+				disabled={authLoading}
+				class="mt-5 flex w-full items-center justify-center gap-2 rounded-xl border border-stone-200 bg-white px-4 py-3 text-sm font-medium text-stone-800 transition hover:border-stone-300 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
+			>
+				<svg
+					xmlns="http://www.w3.org/2000/svg"
+					viewBox="0 0 16 16"
+					class="h-5 w-5"
+					fill="currentColor"
+					aria-hidden="true"
+				>
+					<path
+						d="M12.6.75h2.454l-5.36 6.142L16 15.25h-4.937l-3.867-5.07-4.425 5.07H.316l5.733-6.57L0 .75h5.063l3.495 4.633L12.601.75Zm-.86 13.028h1.36L4.323 2.145H2.865z"
+					/>
+				</svg>
+				<span>{authLoading ? 'Redirecting…' : 'Continue with X'}</span>
+			</button>
+		</div>
+	</div>
+{/if}
 {#if showAuthModal}
 	<div
 		in:fade={{ duration: 200 }}
