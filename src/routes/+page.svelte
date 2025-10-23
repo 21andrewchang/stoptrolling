@@ -45,6 +45,7 @@
 		try {
 			const result = await supabase.auth.getUser();
 			userRes = result.data;
+			console.log('user: ', userRes);
 			authErr = result.error;
 		} catch (err) {
 			console.error('Supabase getUser exception:', err);
@@ -188,6 +189,22 @@
 		showAuthModal = false;
 	}
 
+	async function signOutCurrentUser() {
+		if (authLoading) return;
+		try {
+			authLoading = true;
+			const { error } = await supabase.auth.signOut();
+			if (error) throw error;
+			firstName = null;
+			userEmail = null;
+			hasUser = false;
+		} catch (err) {
+			console.error('Supabase signOut failed:', err);
+		} finally {
+			authLoading = false;
+		}
+	}
+
 	async function signInWithTwitter() {
 		try {
 			authLoading = true;
@@ -208,7 +225,11 @@
 	}
 
 	async function handleAuthButtonClick(): Promise<void> {
-		if (hasUser) return;
+		if (authLoading) return;
+		if (hasUser) {
+			await signOutCurrentUser();
+			return;
+		}
 		openAuthModal();
 	}
 
