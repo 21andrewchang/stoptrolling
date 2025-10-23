@@ -6,6 +6,7 @@
 	import { dayLog, type HourEntry, endHourOf, defaultHours } from '$lib/stores/day-log';
 	import { ymd, slotRange, minutesUntil, rangeLabel as labelFor } from '$lib/utils/time';
 	import { supabase } from '$lib/supabase';
+	import { PUBLIC_X_CLIENT_ID, PUBLIC_X_REDIRECT_URI } from '$env/static/public';
 	import type { User } from '@supabase/supabase-js';
 
 	const date = ymd(new Date());
@@ -189,18 +190,39 @@
 		showAuthModal = false;
 	}
 
+	function resetLocalSessionState() {
+		dayId = null;
+		firstName = null;
+		userEmail = null;
+		hasUser = false;
+		showReview = false;
+		reviewIndex = null;
+		editingIndex = null;
+		pendingIndex = null;
+		pendingBody = null;
+		currentBody = '';
+		goal = '';
+		entries = [];
+		xAuthorizeLoading = false;
+	}
+
 	async function signOutCurrentUser() {
 		if (authLoading) return;
 		try {
 			authLoading = true;
 			const { error } = await supabase.auth.signOut();
 			if (error) throw error;
-			firstName = null;
-			userEmail = null;
-			hasUser = false;
+			resetLocalSessionState();
+			dayLog.clearAll();
+			const rec = dayLog.ensure(date);
+			goal = rec.goal;
+			entries = rec.hours;
 		} catch (err) {
 			console.error('Supabase signOut failed:', err);
 		} finally {
+			showAuthModal = false;
+			showHIWModal = false;
+			authError = '';
 			authLoading = false;
 		}
 	}
@@ -238,6 +260,7 @@
 	let goal = $state('');
 	let entries = $state<HourEntry[]>([]);
 	let now = $state(new Date());
+	let xAuthorizeLoading = $state(false);
 
 	$effect(() => {
 		const rec = $dayLog[date];
@@ -363,6 +386,95 @@
 		if (date < today) return false;
 		const { start } = slotRange(date, entry.startHour, endHourOf);
 		return now.getTime() < start.getTime();
+	}
+
+	const X_AUTHORIZE_ENDPOINT = 'https://x.com/i/oauth2/authorize';
+	const X_OAUTH_SCOPES = ['tweet.read', 'tweet.write', 'users.read', 'offline.access'];
+	const PKCE_CHARSET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
+
+	function base64UrlEncode(buffer: ArrayBuffer): string {
+		if (typeof btoa !== 'function') {
+			throw new Error('Base64 encoding is unavailable in this environment');
+		}
+		const bytes = new Uint8Array(buffer);
+		let binary = '';
+		bytes.forEach((b) => (binary += String.fromCharCode(b)));
+		return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+	}
+
+	function buildRandomString(length: number, alphabet: string): string {
+		if (typeof window === 'undefined' || !window.crypto?.getRandomValues) {
+			throw new Error('Secure randomness unavailable in this environment');
+		}
+		const randomValues = new Uint8Array(length);
+		window.crypto.getRandomValues(randomValues);
+		const chars = alphabet.length;
+		let out = '';
+		for (let i = 0; i < length; i++) {
+			out += alphabet[randomValues[i] % chars];
+		}
+		return out;
+	}
+
+	function createPkceVerifier(): string {
+		return buildRandomString(64, PKCE_CHARSET);
+	}
+
+	async function createPkceChallenge(verifier: string): Promise<string> {
+		if (!window.crypto?.subtle) {
+			throw new Error('PKCE challenge generation requires Web Crypto support');
+		}
+		const data = new TextEncoder().encode(verifier);
+		const digest = await window.crypto.subtle.digest('SHA-256', data);
+		return base64UrlEncode(digest);
+	}
+
+	function persistPkceState(verifier: string, stateValue: string): void {
+		try {
+			if (typeof localStorage !== 'undefined') {
+				localStorage.setItem('stoptrolling:x:code_verifier', verifier);
+				localStorage.setItem('stoptrolling:x:oauth_state', stateValue);
+			}
+
+			const maxAge = 600; // 10 minutes
+			const secure = location.protocol === 'https:' ? '; Secure' : '';
+			document.cookie = `x_pkce_verifier=${encodeURIComponent(verifier)}; Path=/; Max-Age=${maxAge}; SameSite=Lax${secure}`;
+			document.cookie = `x_oauth_state=${encodeURIComponent(stateValue)}; Path=/; Max-Age=${maxAge}; SameSite=Lax${secure}`;
+		} catch (err) {
+			console.warn('Failed to persist X OAuth state', err);
+		}
+	}
+
+	async function authorizeAutoPost() {
+		if (!hasUser || xAuthorizeLoading) return;
+		if (!PUBLIC_X_CLIENT_ID || !PUBLIC_X_REDIRECT_URI) {
+			console.error('X OAuth client configuration is missing');
+			return;
+		}
+		if (typeof window === 'undefined') return;
+
+		try {
+			xAuthorizeLoading = true;
+			const verifier = createPkceVerifier();
+			const challenge = await createPkceChallenge(verifier);
+			const stateValue = buildRandomString(32, PKCE_CHARSET);
+			persistPkceState(verifier, stateValue);
+
+			const params = new URLSearchParams({
+				response_type: 'code',
+				client_id: PUBLIC_X_CLIENT_ID,
+				redirect_uri: PUBLIC_X_REDIRECT_URI,
+				scope: X_OAUTH_SCOPES.join(' '),
+				state: stateValue,
+				code_challenge: challenge,
+				code_challenge_method: 'S256'
+			});
+
+			window.location.href = `${X_AUTHORIZE_ENDPOINT}?${params.toString()}`;
+		} catch (err) {
+			console.error('Failed to initiate X OAuth authorization', err);
+			xAuthorizeLoading = false;
+		}
 	}
 
 	function circleClassFor(entry: HourEntry): string {
@@ -528,6 +640,18 @@
 		{#if !hasUser}
 			<button type="button" class="flex items-center" onclick={openHIWModal}>
 				<span class="font-mono text-sm tracking-tighter text-stone-500">How it works</span>
+			</button>
+		{:else}
+			<button
+				type="button"
+				class="flex items-center"
+				aria-label="Authorize auto-posting via X OAuth"
+				onclick={authorizeAutoPost}
+				disabled={xAuthorizeLoading}
+			>
+				<span class="font-mono text-sm tracking-tighter text-stone-500">
+					{xAuthorizeLoading ? 'Authorizing…' : 'Authorize auto-post'}
+				</span>
 			</button>
 		{/if}
 
