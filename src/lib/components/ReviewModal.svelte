@@ -130,7 +130,7 @@
 
 			const payload = {
 				image: dataUrl,
-				text: `${date || 'today'} · Score ${score}/100 · stoptrolling.app`
+				text: `here's how i spent my day`
 			};
 
 			const res = await fetch('/api/x/tweet', {
