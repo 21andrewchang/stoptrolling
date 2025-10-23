@@ -469,7 +469,11 @@
 	<header class="fixed top-4 left-6 z-10 text-stone-600">
 		<div class="flex items-center gap-2 font-mono text-sm">
 			<span class="font-semibold text-stone-800">{date.slice(5)}</span>
-			<span class="max-w-[50vw] truncate">{goal ? `I will ${goal}` : ''}</span>
+			<span
+				class="max-w-[50vw] truncate"
+				transition:fly|global={{ y: 4, delay: 400, duration: 200 }}
+				>{goal ? `I will ${goal}` : ''}</span
+			>
 		</div>
 	</header>
 

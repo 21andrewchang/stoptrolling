@@ -38,7 +38,7 @@
 			const redirectTo = `${window.location.origin}/d/${today}`;
 
 			const { error } = await supabase.auth.signInWithOAuth({
-				provider: 'google',
+				provider: 'twitter',
 				options: { redirectTo }
 			});
 
