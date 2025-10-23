@@ -154,9 +154,27 @@
 		dayLog.setGoal(date, remote.goal);
 	}
 
-	onMount(() => {
+	async function post() {
+		const { data: sessionData } = await supabase.auth.getSession();
+		const session = sessionData.session;
+		const providerToken =
+			session?.provider_token ?? (session?.user?.identities?.[0] as any)?.access_token;
+		if (!providerToken) {
+			console.warn('No provider token available for posting to X.');
+			return;
+		}
+
+		await fetch('/api/x/post-now', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ access_token: providerToken, text: 'holy shit it works' })
+		});
+	}
+
+	onMount(async () => {
+		await post();
 		dayLog.ensure(date);
-		void syncFromDatabase();
+		await syncFromDatabase();
 	});
 
 	async function handleAuthButtonClick(): Promise<void> {
@@ -452,8 +470,8 @@
 	const TOTAL = 16;
 	const goodCount = $derived(entries.slice(0, TOTAL).filter((e) => e.aligned === true).length);
 	const badCount = $derived(entries.slice(0, TOTAL).filter((e) => e.aligned === false).length);
-	const rawScore = $derived(((goodCount + badCount) / 16) * 100 + goodCount * 3 - badCount * 2);
-	const score = $derived(Math.max(0, Math.min(150, Math.round(rawScore))));
+	const rawScore = $derived(((goodCount + badCount) / 16) * 100 + goodCount - badCount);
+	const score = $derived(Math.max(0, Math.min(100, Math.round(rawScore))));
 </script>
 
 <ReviewModal

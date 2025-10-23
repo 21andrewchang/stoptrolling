@@ -18,7 +18,16 @@
 		siteLabel?: string;
 		onClose?: () => void;
 	}>();
-
+	function shortDate(d: string): string {
+		if (!d) return '';
+		// Try robust locale formatting (handles 'YYYY-MM-DD' and ISO strings)
+		const tryISO = new Date(d);
+		if (!Number.isNaN(tryISO.getTime())) {
+			return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(tryISO);
+		}
+		// Fallback: strip a leading year from common patterns
+		return d.replace(/^(\d{4})[\/-]?/, ''); // e.g., '2025-10-22' -> '10-22'
+	}
 	let toastOpen = $state(false);
 	let msg = $state('');
 	let tone: 'neutral' | 'success' | 'warning' | 'danger' = 'neutral';
@@ -107,12 +116,14 @@
 	>
 		<Toast open={toastOpen} message={msg} {tone} autoHide={3000} onClose={closeToast} />
 		<div aria-modal="true" class="mx-4 rounded-2xl">
-			<div bind:this={cardEl} class="relative h-full w-full p-2">
+			<div bind:this={cardEl} class="relative flex h-full w-full flex-col justify-center p-6">
 				<div
 					class="flex flex-row justify-between"
 					transition:fly={{ y: 10, delay: 200, duration: 200 }}
 				>
-					<h2 class="font-mono text-xl leading-tight text-stone-900">{date || ''}</h2>
+					<h2 class="font-mono text-xl leading-tight text-stone-900">
+						16 Hours of {shortDate(date) || ''}
+					</h2>
 					<div class="rounded-lg bg-stone-500/80 px-2.5 py-1 font-mono text-sm text-white">
 						{score}
 					</div>
@@ -142,7 +153,7 @@
 					{siteLabel}
 				</div>
 			</div>
-			<div class="flex w-full justify-between">
+			<div class="flex w-full justify-between p-4">
 				<div class="flex flex-row gap-2">
 					<button
 						type="button"
