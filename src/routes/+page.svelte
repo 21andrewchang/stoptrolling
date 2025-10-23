@@ -392,7 +392,13 @@
 	}
 
 	const X_AUTHORIZE_ENDPOINT = 'https://x.com/i/oauth2/authorize';
-	const X_OAUTH_SCOPES = ['tweet.read', 'tweet.write', 'users.read', 'offline.access'];
+	const X_OAUTH_SCOPES = [
+		'tweet.read',
+		'tweet.write',
+		'users.read',
+		'offline.access',
+		'media.write'
+	];
 	const PKCE_CHARSET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
 
 	function base64UrlEncode(buffer: ArrayBuffer): string {

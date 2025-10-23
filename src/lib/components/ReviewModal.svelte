@@ -223,7 +223,28 @@
 				<div class="flex flex-row gap-2">
 					<button
 						type="button"
-						class="flex rounded-md p-2 text-stone-600 transition hover:bg-stone-200/50 focus:ring-2 focus:ring-stone-400 focus:outline-none"
+						class="flex items-center gap-2 rounded-md bg-stone-900 px-3 py-2 text-xs font-medium text-white transition hover:bg-stone-800 focus:ring-2 focus:ring-stone-400 focus:outline-none disabled:cursor-not-allowed disabled:opacity-70"
+						onclick={postToX}
+						disabled={postLoading}
+						aria-label="Share this summary to X"
+						title="Share to X"
+					>
+						<svg
+							xmlns="http://www.w3.org/2000/svg"
+							viewBox="0 0 16 16"
+							class="h-4 w-4"
+							fill="currentColor"
+							aria-hidden="true"
+						>
+							<path
+								d="M12.6.75h2.454l-5.36 6.142L16 15.25h-4.937l-3.867-5.07-4.425 5.07H.316l5.733-6.57L0 .75h5.063l3.495 4.633L12.601.75Zm-.86 13.028h1.36L4.323 2.145H2.865z"
+							/>
+						</svg>
+						<span>{postLoading ? 'Posting…' : 'Post to X'}</span>
+					</button>
+					<button
+						type="button"
+						class="ml-2 flex rounded-md p-2 text-stone-600 transition hover:bg-stone-200/50 focus:ring-2 focus:ring-stone-400 focus:outline-none"
 						onclick={screenshot}
 						aria-label="Copy this review as an image"
 					>
@@ -262,27 +283,6 @@
 							<rect x="9" y="9" width="13" height="13" rx="2" />
 							<rect x="3" y="3" width="13" height="13" rx="2" />
 						</svg>
-					</button>
-					<button
-						type="button"
-						class="flex items-center gap-2 rounded-md bg-stone-900 px-3 py-2 text-xs font-medium text-white transition hover:bg-stone-800 focus:ring-2 focus:ring-stone-400 focus:outline-none disabled:cursor-not-allowed disabled:opacity-70"
-						onclick={postToX}
-						disabled={postLoading}
-						aria-label="Share this summary to X"
-						title="Share to X"
-					>
-						<svg
-							xmlns="http://www.w3.org/2000/svg"
-							viewBox="0 0 16 16"
-							class="h-4 w-4"
-							fill="currentColor"
-							aria-hidden="true"
-						>
-							<path
-								d="M12.6.75h2.454l-5.36 6.142L16 15.25h-4.937l-3.867-5.07-4.425 5.07H.316l5.733-6.57L0 .75h5.063l3.495 4.633L12.601.75Zm-.86 13.028h1.36L4.323 2.145H2.865z"
-							/>
-						</svg>
-						<span>{postLoading ? 'Posting…' : 'Post to X'}</span>
 					</button>
 				</div>
 				<button

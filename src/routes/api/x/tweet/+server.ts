@@ -4,7 +4,7 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 
 const TOKEN_URL = 'https://api.x.com/2/oauth2/token';
-const MEDIA_UPLOAD_URL = 'https://upload.twitter.com/1.1/media/upload.json';
+const MEDIA_UPLOAD_URL = 'https://api.x.com/2/media/upload';
 const TWEET_URL = 'https://api.x.com/2/tweets';
 const REFRESH_SKEW_MS = 60_000;
 
@@ -40,6 +40,7 @@ const refreshAccessToken = async (
 	if (!CLIENT_SECRET) {
 		throw new Error('X client secret is not configured');
 	}
+	console.log('refreshing token')
 
 	const basic = Buffer.from(`${PUBLIC_X_CLIENT_ID}:${CLIENT_SECRET}`).toString('base64');
 
@@ -116,7 +117,40 @@ export const POST: RequestHandler = async ({ request, locals, fetch }) => {
 	}
 
 	const tokensData = tokenRow as TokenRecord;
-	let tokens: TokenRecord = tokensData;
+	let tokens: TokenRecord = { ...tokensData };
+
+	const persistTokens = async (next: TokenRecord) => {
+		const { error: persistError } = await locals.supabase.from('x_tokens').upsert(
+			{
+				user_id: userId,
+				access_token: next.access_token,
+				refresh_token: next.refresh_token,
+				expires_at: next.expires_at,
+				scope: next.scope,
+				token_type: next.token_type ?? 'bearer'
+			},
+			{ onConflict: 'user_id' }
+		);
+
+		if (persistError) {
+			console.error('Failed to persist refreshed X tokens', persistError);
+		}
+	};
+
+	const refreshAndPersist = async (): Promise<TokenRecord | null> => {
+		const refreshToken = tokens.refresh_token;
+		if (!refreshToken) {
+			return null;
+		}
+
+		const refreshed = await refreshAccessToken(refreshToken, fetch);
+		if (!refreshed) {
+			return null;
+		}
+
+		await persistTokens(refreshed);
+		return refreshed;
+	};
 
 	const needsRefresh =
 		!tokens.expires_at ||
@@ -127,51 +161,57 @@ export const POST: RequestHandler = async ({ request, locals, fetch }) => {
 			return json({ error: 'refresh_unavailable' }, { status: 401 });
 		}
 
-		const refreshed = await refreshAccessToken(tokens.refresh_token, fetch);
+		const refreshed = await refreshAndPersist();
+		console.log('refreshed tokens: ', refreshed);
 		if (!refreshed) {
 			return json({ error: 'refresh_failed' }, { status: 401 });
 		}
 
 		tokens = refreshed;
-
-		const { error: persistError } = await locals.supabase.from('x_tokens').upsert(
-			{
-				user_id: userId,
-				access_token: tokens.access_token,
-				refresh_token: tokens.refresh_token,
-				expires_at: tokens.expires_at,
-				scope: tokens.scope,
-				token_type: tokens.token_type ?? 'bearer'
-			},
-			{ onConflict: 'user_id' }
-		);
-
-		if (persistError) {
-			console.error('Failed to persist refreshed X tokens', persistError);
-		}
 	}
 
-	const mediaResponse = await fetch(MEDIA_UPLOAD_URL, {
-		method: 'POST',
-		headers: {
-			'Authorization': `Bearer ${tokens.access_token}`,
-			'Content-Type': 'application/x-www-form-urlencoded'
-		},
-		body: new URLSearchParams({
-			media_data: base64
-		})
-	});
-	console.log('media', mediaResponse);
+	const uploadMedia = (accessToken: string) =>
+		fetch(MEDIA_UPLOAD_URL, {
+			method: 'POST',
+			headers: {
+				'Authorization': `Bearer ${accessToken}`,
+				'Content-Type': 'application/json'
+			},
+			body: JSON.stringify({
+				media: base64,
+				media_category: 'tweet_image',
+				media_type: 'image/png',
+				shared: false
+			})
+		});
+
+	let mediaResponse = await uploadMedia(tokens.access_token);
+	if (mediaResponse.status === 401 || mediaResponse.status === 403) {
+		if (!tokens.refresh_token) {
+			const detail = await mediaResponse.json().catch(() => ({}));
+			return json({ error: 'refresh_unavailable', detail }, { status: 401 });
+		}
+
+		const refreshed = await refreshAndPersist();
+		if (!refreshed) {
+			const detail = await mediaResponse.json().catch(() => ({}));
+			return json({ error: 'refresh_failed', detail }, { status: 401 });
+		}
+
+		tokens = refreshed;
+		mediaResponse = await uploadMedia(tokens.access_token);
+	}
 
 	const mediaJson = await mediaResponse.json();
+	console.log('media response: ', mediaJson);
 
 	if (!mediaResponse.ok) {
 		console.error('X media upload failed', mediaJson);
-		const status = mediaResponse.status === 401 ? 401 : 502;
+		const status = mediaResponse.status === 401 || mediaResponse.status === 403 ? 401 : 502;
 		return json({ error: 'media_upload_failed', detail: mediaJson }, { status });
 	}
 
-	const mediaId = mediaJson.media_id_string ?? mediaJson.media_id;
+	const mediaId = mediaJson.data.id;
 	if (!mediaId) {
 		return json({ error: 'media_missing' }, { status: 502 });
 	}
@@ -181,25 +221,43 @@ export const POST: RequestHandler = async ({ request, locals, fetch }) => {
 			? payload.text.trim()
 			: undefined;
 
-	const tweetResponse = await fetch(TWEET_URL, {
-		method: 'POST',
-		headers: {
-			'Authorization': `Bearer ${tokens.access_token}`,
-			'Content-Type': 'application/json'
-		},
-		body: JSON.stringify({
-			text,
-			media: {
-				media_ids: [mediaId]
-			}
-		})
-	});
+	const postTweet = (accessToken: string) =>
+		fetch(TWEET_URL, {
+			method: 'POST',
+			headers: {
+				'Authorization': `Bearer ${accessToken}`,
+				'Content-Type': 'application/json'
+			},
+			body: JSON.stringify({
+				text,
+				media: {
+					media_ids: [mediaId]
+				}
+			})
+		});
+
+	let tweetResponse = await postTweet(tokens.access_token);
+	if (tweetResponse.status === 401 || tweetResponse.status === 403) {
+		if (!tokens.refresh_token) {
+			const detail = await tweetResponse.json().catch(() => ({}));
+			return json({ error: 'refresh_unavailable', detail }, { status: 401 });
+		}
+
+		const refreshed = await refreshAndPersist();
+		if (!refreshed) {
+			const detail = await tweetResponse.json().catch(() => ({}));
+			return json({ error: 'refresh_failed', detail }, { status: 401 });
+		}
+
+		tokens = refreshed;
+		tweetResponse = await postTweet(tokens.access_token);
+	}
 
 	const tweetJson = await tweetResponse.json();
 
 	if (!tweetResponse.ok) {
 		console.error('Tweet creation failed', tweetJson);
-		const status = tweetResponse.status === 401 ? 401 : 502;
+		const status = tweetResponse.status === 401 || tweetResponse.status === 403 ? 401 : 502;
 		return json({ error: 'tweet_failed', detail: tweetJson }, { status });
 	}
 
