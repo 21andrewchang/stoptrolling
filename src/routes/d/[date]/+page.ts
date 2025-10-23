@@ -1,9 +1,6 @@
+import { redirect } from '@sveltejs/kit';
 import type { PageLoad } from './$types';
 
-export const load: PageLoad = ({ params }) => {
-	const { date } = params;
-
-	return {
-		date
-	};
+export const load: PageLoad = () => {
+	throw redirect(302, '/');
 };
