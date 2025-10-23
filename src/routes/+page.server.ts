@@ -1,10 +1,11 @@
 import { env as dyn } from '$env/dynamic/private';
 import { PUBLIC_X_CLIENT_ID, PUBLIC_X_REDIRECT_URI } from '$env/static/public';
+import type { PageServerLoad } from './$types';
 import { redirect } from '@sveltejs/kit';
 
 const TOKEN_URL = 'https://api.x.com/2/oauth2/token';
 
-export const load = async ({ url, cookies, fetch }) => {
+export const load: PageServerLoad = async ({ url, cookies, fetch, locals }) => {
 	const code = url.searchParams.get('code');
 	const state = url.searchParams.get('state');
 	if (!code || !state) return {};
@@ -54,6 +55,61 @@ export const load = async ({ url, cookies, fetch }) => {
 	if (!r.ok) {
 		// Common causes: redirect_uri mismatch, wrong app type, missing/invalid Basic, stale code_verifier
 		throw redirect(302, '/?x=oauth_error');
+	}
+
+	if (typeof tokens.access_token !== 'string') {
+		console.error('Missing access token from X OAuth response');
+		throw redirect(302, '/?x=oauth_error');
+	}
+
+	let userId = locals.session?.user.id;
+	console.log('userid: ', userId);
+
+	if (!userId) {
+		const { data, error: userError } = await locals.supabase.auth.getUser();
+		if (!userError) {
+			userId = data.user?.id ?? null;
+		}
+	}
+
+	if (!userId) {
+		throw redirect(302, '/?x=login_required');
+	}
+
+	const expiresInSeconds =
+		typeof tokens.expires_in === 'number'
+			? tokens.expires_in
+			: typeof tokens.expires_in === 'string'
+				? Number.parseInt(tokens.expires_in, 10)
+				: null;
+
+	const expiresAt =
+		typeof tokens.expires_at === 'string'
+			? tokens.expires_at
+			: typeof expiresInSeconds === 'number' && Number.isFinite(expiresInSeconds)
+				? new Date(Date.now() + expiresInSeconds * 1000).toISOString()
+				: null;
+
+	if (!expiresAt) {
+		console.error('Missing expires_at information from X OAuth response');
+		throw redirect(302, '/?x=oauth_error');
+	}
+
+	const { error } = await locals.supabase.from('x_tokens').upsert(
+		{
+			user_id: userId,
+			access_token: tokens.access_token,
+			refresh_token: tokens.refresh_token ?? null,
+			expires_at: expiresAt,
+			scope: tokens.scope ?? null,
+			token_type: tokens.token_type ?? 'bearer'
+		},
+		{ onConflict: 'user_id' }
+	);
+
+	if (error) {
+		console.error('Failed to persist X tokens', error);
+		throw redirect(302, '/?x=token_store_failed');
 	}
 
 	// Persist tokens for the signed-in user

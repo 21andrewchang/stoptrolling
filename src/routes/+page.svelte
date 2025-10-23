@@ -79,6 +79,8 @@
 		hasUser = true;
 		authResolved = true;
 
+		await syncServerSupabaseSession();
+
 		const { data, error } = await supabase
 			.from('days')
 			.upsert({ user_id, date }, { onConflict: 'user_id,date' })
@@ -445,6 +447,47 @@
 		}
 	}
 
+	async function syncServerSupabaseSession(): Promise<boolean> {
+		try {
+			const {
+				data: { session },
+				error
+			} = await supabase.auth.getSession();
+
+			if (error || !session) {
+				console.error('Failed to fetch Supabase session for server sync', error);
+				return false;
+			}
+
+			const { access_token: accessToken, refresh_token: refreshToken } = session;
+
+			if (typeof accessToken !== 'string' || typeof refreshToken !== 'string') {
+				console.error('Supabase session missing tokens for server sync');
+				return false;
+			}
+
+			const res = await fetch('/api/auth/session', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					access_token: accessToken,
+					refresh_token: refreshToken
+				}),
+				credentials: 'same-origin'
+			});
+
+			if (!res.ok) {
+				console.error('Server Supabase session sync failed', await res.text());
+				return false;
+			}
+
+			return true;
+		} catch (err) {
+			console.error('Unexpected error syncing Supabase session to server', err);
+			return false;
+		}
+	}
+
 	async function authorizeAutoPost() {
 		if (!hasUser || xAuthorizeLoading) return;
 		if (!PUBLIC_X_CLIENT_ID || !PUBLIC_X_REDIRECT_URI) {
@@ -455,6 +498,13 @@
 
 		try {
 			xAuthorizeLoading = true;
+			const serverSessionSynced = await syncServerSupabaseSession();
+			if (!serverSessionSynced) {
+				xAuthorizeLoading = false;
+				authError = 'We could not confirm your Supabase session. Please sign in again.';
+				return;
+			}
+
 			const verifier = createPkceVerifier();
 			const challenge = await createPkceChallenge(verifier);
 			const stateValue = buildRandomString(32, PKCE_CHARSET);
