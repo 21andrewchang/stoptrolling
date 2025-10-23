@@ -161,6 +161,7 @@ export const POST: RequestHandler = async ({ request, locals, fetch }) => {
 			media_data: base64
 		})
 	});
+	console.log('media', mediaResponse);
 
 	const mediaJson = await mediaResponse.json();
 
