@@ -53,7 +53,6 @@ export const load: PageServerLoad = async ({ url, cookies, fetch, locals }) => {
 	}
 
 	if (!r.ok) {
-		// Common causes: redirect_uri mismatch, wrong app type, missing/invalid Basic, stale code_verifier
 		throw redirect(302, '/?x=oauth_error');
 	}
 

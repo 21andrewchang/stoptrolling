@@ -28,9 +28,11 @@
 		// Fallback: strip a leading year from common patterns
 		return d.replace(/^(\d{4})[\/-]?/, ''); // e.g., '2025-10-22' -> '10-22'
 	}
+	type ToastTone = 'neutral' | 'success' | 'warning' | 'danger';
+
 	let toastOpen = $state(false);
 	let msg = $state('');
-	let tone: 'neutral' | 'success' | 'warning' | 'danger' = 'neutral';
+	let tone = $state<ToastTone>('neutral');
 
 	function openToast() {
 		toastOpen = true;
@@ -39,21 +41,24 @@
 		toastOpen = false;
 	}
 
-	function notify(message: string, t: typeof tone = 'neutral', autoHide = 3000) {
+	function notify(message: string, t: ToastTone = 'neutral', autoHide = 3000) {
 		msg = message;
 		tone = t;
 		toastOpen = true;
 	}
-	let cardEl: HTMLElement | null = null;
+	let cardEl = $state<HTMLElement | null>(null);
+	let postLoading = $state(false);
 
 	async function copySummary() {
 		notify('Summary has been saved to clipboard', 'success');
 		try {
 			const total = dots.length || 0;
-			const good = dots.filter((d) => d === true).length;
+			const good = dots.filter((d: true | false | null) => d === true).length;
 			const score = total ? Math.round((good / total) * 100) : 0;
 
-			const line = dots.map((d) => (d === true ? '🟢' : d === false ? '🔴' : '⚪')).join('');
+			const line = dots
+				.map((d: true | false | null) => (d === true ? '🟢' : d === false ? '🔴' : '⚪'))
+				.join('');
 
 			const text = `${date || 'today'} | Score: ${score} | stoptrolling.app\n${line} `;
 
@@ -107,6 +112,49 @@
 	function onBackdrop(e: MouseEvent) {
 		if (e.target === e.currentTarget) close();
 	}
+
+	async function postToX() {
+		if (postLoading) return;
+		if (!cardEl) {
+			notify('Preview is not ready yet. Try again in a moment.', 'warning');
+			return;
+		}
+
+		try {
+			postLoading = true;
+			const { toPng } = await import('html-to-image');
+			const dataUrl = await toPng(cardEl, {
+				backgroundColor: '#F5F5F4',
+				pixelRatio: 2
+			});
+
+			const payload = {
+				image: dataUrl,
+				text: `${date || 'today'} · Score ${score}/100 · stoptrolling.app`
+			};
+
+			const res = await fetch('/api/x/tweet', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(payload),
+				credentials: 'same-origin'
+			});
+			console.log(res);
+
+			if (!res.ok) {
+				const detail = await res.json().catch(() => ({}));
+				const message = detail?.error ?? 'Failed to share to X';
+				throw new Error(message);
+			}
+
+			notify('Shared to X successfully!', 'success', 5000);
+		} catch (err: any) {
+			console.error('Failed to post to X', err);
+			notify(err?.message ?? 'Sharing to X failed. Try again later.', 'danger', 5000);
+		} finally {
+			postLoading = false;
+		}
+	}
 </script>
 
 {#if open}
@@ -122,7 +170,7 @@
 					transition:fly={{ y: 10, delay: 200, duration: 200 }}
 				>
 					<h2 class="font-mono text-xl leading-tight text-stone-900">
-						16 Hours of {shortDate(date) || ''}
+						{shortDate(date) || ''}
 					</h2>
 					<div class="rounded-lg bg-stone-500/80 px-2.5 py-1 font-mono text-sm text-white">
 						{score}
@@ -135,13 +183,31 @@
 				>
 					<div class="flex flex-wrap gap-3">
 						{#each dots as d, i}
-							<span
-								class="inline-block h-5 w-5 rounded-full"
-								class:bg-rose-500={d === false}
-								class:bg-emerald-500={d === true}
-								class:bg-stone-300={d === null}
-								aria-label={`dot ${i + 1}`}
-							/>
+							<div class="relative flex flex-col items-center pb-3" style="width:1.25rem">
+								<span
+									class="inline-block h-5 w-5 rounded-full"
+									class:bg-rose-500={d === false}
+									class:bg-emerald-500={d === true}
+									class:bg-stone-300={d === null}
+									aria-label={`dot ${i + 1}`}
+								/>
+								{#if i === 0}
+									<div
+										class="pointer-events-none absolute -bottom-1 left-1/2 -translate-x-1/2
+                 font-mono text-[8px] whitespace-nowrap text-stone-400"
+									>
+										8 AM
+									</div>
+								{/if}
+								{#if i === 15}
+									<div
+										class="pointer-events-none absolute -bottom-1 left-1/2 -translate-x-1/2
+                 font-mono text-[8px] whitespace-nowrap text-stone-400"
+									>
+										11 PM
+									</div>
+								{/if}
+							</div>
 						{/each}
 					</div>
 				</div>
@@ -159,6 +225,7 @@
 						type="button"
 						class="flex rounded-md p-2 text-stone-600 transition hover:bg-stone-200/50 focus:ring-2 focus:ring-stone-400 focus:outline-none"
 						onclick={screenshot}
+						aria-label="Copy this review as an image"
 					>
 						<svg
 							width="18"
@@ -180,6 +247,7 @@
 						type="button"
 						class="flex rounded-md bg-stone-50 p-2 text-stone-600 transition hover:bg-stone-200/50 focus:ring-2 focus:ring-stone-400 focus:outline-none"
 						onclick={copySummary}
+						aria-label="Copy a text summary"
 					>
 						<svg
 							width="18"
@@ -194,6 +262,27 @@
 							<rect x="9" y="9" width="13" height="13" rx="2" />
 							<rect x="3" y="3" width="13" height="13" rx="2" />
 						</svg>
+					</button>
+					<button
+						type="button"
+						class="flex items-center gap-2 rounded-md bg-stone-900 px-3 py-2 text-xs font-medium text-white transition hover:bg-stone-800 focus:ring-2 focus:ring-stone-400 focus:outline-none disabled:cursor-not-allowed disabled:opacity-70"
+						onclick={postToX}
+						disabled={postLoading}
+						aria-label="Share this summary to X"
+						title="Share to X"
+					>
+						<svg
+							xmlns="http://www.w3.org/2000/svg"
+							viewBox="0 0 16 16"
+							class="h-4 w-4"
+							fill="currentColor"
+							aria-hidden="true"
+						>
+							<path
+								d="M12.6.75h2.454l-5.36 6.142L16 15.25h-4.937l-3.867-5.07-4.425 5.07H.316l5.733-6.57L0 .75h5.063l3.495 4.633L12.601.75Zm-.86 13.028h1.36L4.323 2.145H2.865z"
+							/>
+						</svg>
+						<span>{postLoading ? 'Posting…' : 'Post to X'}</span>
 					</button>
 				</div>
 				<button

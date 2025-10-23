@@ -78,6 +78,7 @@
 		userEmail = typeof user.email === 'string' ? user.email : null;
 		hasUser = true;
 		authResolved = true;
+		console.log('authresolved: ', authResolved);
 
 		await syncServerSupabaseSession();
 
@@ -453,6 +454,7 @@
 				data: { session },
 				error
 			} = await supabase.auth.getSession();
+			console.log(session);
 
 			if (error || !session) {
 				console.error('Failed to fetch Supabase session for server sync', error);
@@ -687,6 +689,15 @@
 	</header>
 
 	<header class="fixed top-4 right-6 z-10 flex flex-row items-center gap-6">
+		<button
+			type="button"
+			class="flex items-center"
+			onclick={() => {
+				showReview = true;
+			}}
+		>
+			<span class="font-mono text-sm tracking-tighter text-stone-500">Show Review</span>
+		</button>
 		{#if !hasUser}
 			<button type="button" class="flex items-center" onclick={openHIWModal}>
 				<span class="font-mono text-sm tracking-tighter text-stone-500">How it works</span>
