@@ -94,6 +94,7 @@
 		console.log('authresolved: ', authResolved);
 
 		await syncServerSupabaseSession();
+		await upsertTimezoneIfNeeded(user_id);
 		await checkAutoPostAuthorization(user_id);
 		void loadHistoryInBackground(user_id);
 
@@ -185,6 +186,39 @@
 		console.log('Loaded day from database', { date, ...remote });
 		dayLog.replaceHours(date, remote.hours);
 		dayLog.setGoal(date, remote.goal);
+	}
+
+	async function upsertTimezoneIfNeeded(user_id: string): Promise<void> {
+		try {
+			// browser-only; if somehow called server-side, just bail
+			if (typeof Intl === 'undefined' || typeof window === 'undefined') return;
+
+			const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+
+			// read current value to avoid useless writes
+			const { data: existing, error: readErr } = await supabase
+				.from('users')
+				.select('timezone')
+				.eq('id', user_id)
+				.maybeSingle();
+
+			if (readErr) {
+				console.warn('profiles read failed (timezone check):', readErr);
+				// fall through to attempt upsert anyway
+			}
+
+			// only write if missing/different
+			if (!existing || existing.timezone !== tz) {
+				const { error: upsertErr } = await supabase.from('users').upsert(
+					{ user_id: user_id, timezone: tz }, // include PK so insert works
+					{ onConflict: 'user_id' }
+				);
+
+				if (upsertErr) console.error('profiles upsert (timezone) failed:', upsertErr);
+			}
+		} catch (err) {
+			console.error('profiles upsert (timezone) exception:', err);
+		}
 	}
 
 	onMount(async () => {
