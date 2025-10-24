@@ -450,8 +450,10 @@
 	const displayedEntry = $derived<HourEntry | undefined>(
 		(() => (editingIndex !== null ? entries[editingIndex] : undefined))()
 	);
+	$inspect('displayedentry: ', displayedEntry);
 
 	const isActiveSlot = $derived((() => editingIndex !== null && editingIndex === currentIndex)());
+	$inspect(isActiveSlot);
 	const placeholderStr = $derived(
 		(() => {
 			const e = displayedEntry;
