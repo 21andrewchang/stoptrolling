@@ -357,32 +357,38 @@
 	let now = $state(new Date());
 	let xAuthorizeLoading = $state(false);
 
-    const isQuietHours = $derived((() => {
-        const h = now.getHours();
-        return h < 8;
-    })());
+	const isQuietHours = $derived(
+		(() => {
+			const h = now.getHours();
+			return h < 8;
+		})()
+	);
 
-    function nextEightAM(from: Date): Date {
-        const d = new Date(from);
-        const eight = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 8, 0, 0, 0);
-        if (d.getHours() < 8) return eight;
-        const tomorrow = new Date(eight);
-        tomorrow.setDate(tomorrow.getDate() + 1);
-        return tomorrow;
-    }
+	function nextEightAM(from: Date): Date {
+		const d = new Date(from);
+		const eight = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 8, 0, 0, 0);
+		if (d.getHours() < 8) return eight;
+		const tomorrow = new Date(eight);
+		tomorrow.setDate(tomorrow.getDate() + 1);
+		return tomorrow;
+	}
 
-    const msUntil8 = $derived((() => {
-        if (!isQuietHours) return 0;
-        return Math.max(0, nextEightAM(now).getTime() - now.getTime());
-    })());
+	const msUntil8 = $derived(
+		(() => {
+			if (!isQuietHours) return 0;
+			return Math.max(0, nextEightAM(now).getTime() - now.getTime());
+		})()
+	);
 
-    const countdown = $derived((() => {
-        if (!isQuietHours || msUntil8 <= 0) return { hours: 0, minutes: 0 };
-        const totalMinutes = Math.ceil(msUntil8 / 60000);
-        const hours = Math.floor(totalMinutes / 60);
-        const minutes = totalMinutes % 60;
-        return { hours, minutes };
-    })());
+	const countdown = $derived(
+		(() => {
+			if (!isQuietHours || msUntil8 <= 0) return { hours: 0, minutes: 0 };
+			const totalMinutes = Math.ceil(msUntil8 / 60000);
+			const hours = Math.floor(totalMinutes / 60);
+			const minutes = totalMinutes % 60;
+			return { hours, minutes };
+		})()
+	);
 
 	$effect(() => {
 		const rec = $dayLog[date];
@@ -824,61 +830,66 @@
 		currentBody = (e.currentTarget as HTMLInputElement).value;
 	}
 
-    let isRating = $state(false);
-    let lastVerdict: { ok: boolean, reason: string } | null = null;
+	let isRating = $state(false);
+	let lastVerdict: { ok: boolean; reason: string } | null = null;
 
-    async function rateLog(log: string): Promise<{ ok: boolean, reason: string }> {
-        try {
-            const res = await fetch('/api/openai/rate-log', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ log })
-            });
-            if (!res.ok) throw new Error('Failed to rate log');
-            const data = await res.json();
-            const ok = !!data?.ok;
-            const reason = typeof data?.reason === 'string' ? data.reason : '';
-            return { ok, reason };
-        } catch (err) {
-            console.error('Failed to rate log:', err);
-            return { ok: true, reason: `Fallback (error: ${err})` };
-        }
-    }
+	async function rateLog(
+		log: string,
+		goalText: string | null
+	): Promise<{ ok: boolean; reason: string }> {
+		try {
+			const res = await fetch('/api/openai/rate-log', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ log, goal: goalText ?? '' })
+			});
+			if (!res.ok) throw new Error('Failed to rate log');
+			const data = await res.json();
+			const ok = !!data?.ok;
+			const reason = typeof data?.reason === 'string' ? data.reason : '';
+			return { ok, reason };
+		} catch (err) {
+			console.error('Failed to rate log:', err);
+			return { ok: true, reason: `Fallback (error: ${err})` };
+		}
+	}
 
-    async function backgroundRateAndPersist(dayId: string, dayKey: string, startHour: number, body: string): Promise<void> {
-        try {
-            const res = await fetch('/api/openai/rate-log', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ log: body })
-            });
-            if (!res.ok) throw new Error(await res.text());
-            const data = await res.json();
-            const aligned: boolean = !!data?.ok;
+	async function backgroundRateAndPersist(
+		dayId: string,
+		dayKey: string,
+		startHour: number,
+		body: string,
+		goalText: string | null
+	): Promise<void> {
+		try {
+			const res = await fetch('/api/openai/rate-log', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ log: body, goal: goalText ?? '' })
+			});
+			if (!res.ok) throw new Error(await res.text());
+			const data = await res.json();
+			const aligned: boolean = !!data?.ok;
 
-            const { error } = await supabase.from('day_hours').upsert(
-					{
-						day_id: dayId,
-						start_hour: startHour,
-						body: body,
-						aligned: aligned
-					},
+			const { error } = await supabase
+				.from('day_hours')
+				.upsert(
+					{ day_id: dayId, start_hour: startHour, body, aligned },
 					{ onConflict: 'day_id,start_hour' }
 				);
-            if (error) throw error;
+			if (error) throw error;
 
-            const recIdx = entries.findIndex((e) => e.startHour === startHour);
-            if (recIdx !== -1) dayLog.patchHour(dayKey, recIdx, { aligned });
+			const recIdx = entries.findIndex((e) => e.startHour === startHour);
+			if (recIdx !== -1) dayLog.patchHour(dayKey, recIdx, { aligned });
 
-            if (pendingIndex === recIdx) {
-                pendingIndex = null;
-                pendingBody = null;
-            }
-        } catch (err) {
-            console.error('backgroundRateAndPersist failed:', err);
-        }
-    }
-
+			if (pendingIndex === recIdx) {
+				pendingIndex = null;
+				pendingBody = null;
+			}
+		} catch (err) {
+			console.error('backgroundRateAndPersist failed:', err);
+		}
+	}
 	let pendingIndex = $state<number | null>(null);
 	let pendingBody = $state<string | null>(null);
 
@@ -921,10 +932,10 @@
 		if (!entry) return;
 
 		const trimmed = currentBody.trim();
-        if (!trimmed) return;
+		if (!trimmed) return;
 
 		const startHour = entry.startHour;
-        const entryDayKey = date;
+		const entryDayKey = date;
 
 		let synced = false;
 
@@ -937,7 +948,7 @@
 					{
 						day_id: dayId,
 						start_hour: startHour,
-						body: trimmed,
+						body: trimmed
 					},
 					{ onConflict: 'day_id,start_hour' }
 				);
@@ -961,14 +972,14 @@
 			pendingBody = null;
 		}
 
-        if (dayId) {
-            void backgroundRateAndPersist(dayId, entryDayKey, startHour, trimmed);
-        }
+		if (dayId) {
+			void backgroundRateAndPersist(dayId, entryDayKey, startHour, trimmed, goal);
+		}
 
-        const isLast = editingIndex === entries.length - 1;
-        editingIndex = isLast ? editingIndex : Math.min(idx + 1, entries.length - 1);
-        currentBody = '';
-        if (isLast) showReview = true;
+		const isLast = editingIndex === entries.length - 1;
+		editingIndex = isLast ? editingIndex : Math.min(idx + 1, entries.length - 1);
+		currentBody = '';
+		if (isLast) showReview = true;
 	}
 
 	const basePill =
@@ -1071,7 +1082,7 @@
 						{#if leadingText}
 							<span
 								class="font-mono text-lg tracking-widest"
-								in:fly|global={{ y: 4, delay: 400, duration: 200 }}
+								in:fly|global={{ y: 4, delay: 300, duration: 200 }}
 							>
 								{leadingText}
 							</span>
@@ -1080,40 +1091,40 @@
 				</div>
 			</div>
 
-            {#if isQuietHours}
-                <div class="mt-8 text-center">
-                    <h2 class="text-2xl font-semibold text-stone-800">Goodnight.</h2>
-                    <p class="mt-2 font-mono text-sm text-stone-600">
-                        Come back in {countdown.hours} {countdown.hours === 1 ? 'hour' : 'hours'}
-                        and {countdown.minutes} {countdown.minutes === 1 ? 'minute' : 'minutes'}
-                    </p>
-      
-                    <div class="mt-6">
-                        <DayDots {entries} {circleClassFor} {rangeLabel} />
-                    </div>
-                </div>
-            {:else}
-                {#if isActiveSlot || !displayedEntry}
-                    <form onsubmit={onSubmit} class="flex flex-row">
-                        <input
-                            type="text"
-                            placeholder={placeholderStr}
-                            value={currentBody}
-                            oninput={onInput}
-                            disabled={!isActiveSlot || !displayedEntry}
-                            class="h-14 w-full border-none bg-transparent pr-2 pl-0 font-mono text-3xl font-light
+			{#if isQuietHours}
+				<div class="mt-8 text-center">
+					<h2 class="text-2xl font-semibold text-stone-800">Goodnight.</h2>
+					<p class="mt-2 font-mono text-sm text-stone-600">
+						Come back in {countdown.hours}
+						{countdown.hours === 1 ? 'hour' : 'hours'}
+						and {countdown.minutes}
+						{countdown.minutes === 1 ? 'minute' : 'minutes'}
+					</p>
+
+					<div class="mt-6">
+						<DayDots {entries} {circleClassFor} {rangeLabel} />
+					</div>
+				</div>
+			{:else if isActiveSlot || !displayedEntry}
+				<form onsubmit={onSubmit} class="flex flex-row">
+					<input
+						type="text"
+						placeholder={placeholderStr}
+						value={currentBody}
+						oninput={onInput}
+						disabled={!isActiveSlot || !displayedEntry}
+						class="h-14 w-full border-none bg-transparent pr-2 pl-0 font-mono text-3xl font-light
                                 text-stone-900 ring-0 outline-none placeholder:text-stone-300
                                 focus:border-transparent focus:ring-0 focus:outline-none"
-                            autofocus
-                            aria-label="Current hour note"
-                        />
-                    </form>
-                {:else}
-                    <div class="mt-4">
-                        <DayDots {entries} {circleClassFor} {rangeLabel} />
-                    </div>
-                {/if}
-            {/if}
+						autofocus
+						aria-label="Current hour note"
+					/>
+				</form>
+			{:else}
+				<div class="mt-4">
+					<DayDots {entries} {circleClassFor} {rangeLabel} />
+				</div>
+			{/if}
 			<!-- {:else}
 				<div class="mt-2 flex w-full items-center gap-2">
 					<button
