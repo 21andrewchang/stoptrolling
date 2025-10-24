@@ -1,7 +1,8 @@
 <script lang="ts">
+	import InputState from '$lib/components/InputState.svelte';
+	import DisplayState from '$lib/components/DisplayState.svelte';
 	import ReviewModal from '$lib/components/ReviewModal.svelte';
 	import HistoryModal from '$lib/components/HistoryModal.svelte';
-	import DayDots from '$lib/components/DayDots.svelte';
 	import AutoPostModal from '$lib/components/AutoPostModal.svelte';
 	import AuthModal from '$lib/components/AuthModal.svelte';
 	import HowItWorksModal from '$lib/components/HowItWorksModal.svelte';
@@ -165,10 +166,12 @@
 			console.error('profiles upsert (timezone) exception:', err);
 		}
 	}
+	let hydrated = $state(false);
 
 	onMount(async () => {
 		dayLog.ensure(date);
 		await syncFromDatabase();
+		hydrated = true;
 	});
 
 	function openAuthModal() {
@@ -365,14 +368,14 @@
 		})()
 	);
 
-	const shouldShowInput = $derived((() => !isQuietHours && !!currentEntry && !hasCurrentLog)());
+	const showInput = $derived((() => !isQuietHours && !!currentEntry && !hasCurrentLog)());
 
 	const inputPlaceholder = 'What are you doing right now?';
 
 	const slotLabel = $derived(
 		(() => {
 			const entry = currentEntry;
-			if (!entry || !shouldShowInput) return '';
+			if (!entry || !showInput) return '';
 			return rangeLabel(entry);
 		})()
 	);
@@ -720,7 +723,7 @@
 
 	async function onSubmit(e: SubmitEvent) {
 		e.preventDefault();
-		if (!shouldShowInput || currentIndex === null) return;
+		if (!showInput || currentIndex === null) return;
 
 		const idx = currentIndex;
 		const entry = entries[idx];
@@ -851,66 +854,31 @@
 {/if}
 
 <div class="flex min-h-screen items-center justify-center bg-stone-50 px-6">
-	{#if !showReview}
-		<div class="w-full max-w-xl">
-			<div class="flex items-center justify-between gap-4 text-stone-600">
-				<div class="flex items-center justify-between text-stone-600">
-					<div class="flex min-w-0 items-center gap-2">
-						{#if shouldShowInput && slotLabel}
-							<span
-								class="font-mono text-lg tracking-widest"
-								in:fly|global={{ y: 4, delay: 300, duration: 200 }}
-							>
-								{slotLabel}
-							</span>
-						{:else if statusText}
-							<span
-								class="font-mono text-lg tracking-widest"
-								in:fly|global={{ y: 4, delay: 300, duration: 200 }}
-							>
-								{statusText}
-							</span>
-						{/if}
-					</div>
-				</div>
-			</div>
-
-			{#if isQuietHours}
-				<div class="mt-8 text-center">
-					<h2 class="text-2xl font-semibold text-stone-800">Goodnight.</h2>
-					<p class="mt-2 font-mono text-sm text-stone-600">
-						Come back in {countdown.hours}
-						{countdown.hours === 1 ? 'hour' : 'hours'}
-						and {countdown.minutes}
-						{countdown.minutes === 1 ? 'minute' : 'minutes'}
-					</p>
-
-					<div class="mt-6">
-						<DayDots {entries} {circleClassFor} {rangeLabel} />
-					</div>
-				</div>
-			{:else if shouldShowInput}
-				<form onsubmit={onSubmit} class="flex flex-row">
-					<input
-						type="text"
-						placeholder={inputPlaceholder}
-						value={currentBody}
-						oninput={onInput}
-						disabled={!shouldShowInput || !currentEntry}
-						class="h-14 w-full border-none bg-transparent pr-2 pl-0 font-mono text-3xl font-light
-                                text-stone-900 ring-0 outline-none placeholder:text-stone-300
-                                focus:border-transparent focus:ring-0 focus:outline-none"
-						autofocus
-						aria-label="Current hour note"
-					/>
-				</form>
-			{:else}
-				<div class="mt-4">
-					<DayDots {entries} {circleClassFor} {rangeLabel} />
-				</div>
+	<div class="w-full max-w-xl">
+		{#key showInput}
+			{#if hydrated}
+				<InputState
+					{showInput}
+					{slotLabel}
+					{statusText}
+					{inputPlaceholder}
+					{currentBody}
+					{currentEntry}
+					{onInput}
+					{onSubmit}
+				/>
+				<DisplayState
+					showDisplay={!showInput}
+					{isQuietHours}
+					{entries}
+					{circleClassFor}
+					{rangeLabel}
+					{slotLabel}
+					{statusText}
+				/>
 			{/if}
-		</div>
-	{/if}
+		{/key}
+	</div>
 </div>
 
 <HowItWorksModal

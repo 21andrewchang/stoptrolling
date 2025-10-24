@@ -159,7 +159,7 @@
 
 {#if open}
 	<div
-		class="fixed inset-0 z-[9999] mb-10 flex flex-col items-center justify-center bg-stone-50/80 backdrop-blur-sm"
+		class="fixed inset-0 z-[9999] mb-10 flex flex-col items-center justify-center bg-stone-50 backdrop-blur-sm"
 		transition:blur={{ duration: 200 }}
 	>
 		<Toast open={toastOpen} message={msg} {tone} autoHide={3000} onClose={closeToast} />
