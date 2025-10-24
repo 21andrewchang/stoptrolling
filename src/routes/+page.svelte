@@ -279,7 +279,6 @@
 		userId = null;
 		hasXAuthorization = false;
 		showReview = false;
-		editingIndex = null;
 		pendingIndex = null;
 		pendingBody = null;
 		currentBody = '';
@@ -405,91 +404,85 @@
 		if (timer) clearInterval(timer);
 	});
 
+	const SLOT_COUNT = 16;
+
 	const currentIndex = $derived(
 		(() => {
 			if (!entries.length) return null as number | null;
 			const today = ymd(now);
 			if (date !== today) return null;
-			const START = entries[0].startHour;
-			const SLOTS = entries.length;
-			const h = now.getHours();
-			return h >= START && h < START + SLOTS ? h - START : null;
+			const startHour = entries[0].startHour;
+			const hour = now.getHours();
+			const idx = hour - startHour;
+			return idx >= 0 && idx < SLOT_COUNT ? idx : null;
 		})()
 	);
-	let editingIndex = $state<number | null>(null);
 
-	$effect(() => {
-		if (entries.length === 0) {
-			editingIndex = null;
-			return;
-		}
-
-		const today = ymd(now);
-		if (date === today) {
-			const START = entries[0].startHour;
-			const h = now.getHours();
-			if (h < START) {
-				editingIndex = 0;
-				return;
-			}
-		}
-
-		if (currentIndex === null) {
-			editingIndex = null;
-			return;
-		}
-
-		const cur = entries[currentIndex];
-		const hasBody = !!cur?.body?.trim();
-
-		if (!hasBody && editingIndex !== currentIndex) {
-			editingIndex = currentIndex;
-		}
-	});
-
-	const displayedEntry = $derived<HourEntry | undefined>(
-		(() => (editingIndex !== null ? entries[editingIndex] : undefined))()
+	const currentEntry = $derived<HourEntry | undefined>(
+		(() => (currentIndex !== null ? entries[currentIndex] : undefined))()
 	);
-	$inspect('displayedentry: ', displayedEntry);
 
-	const isActiveSlot = $derived((() => editingIndex !== null && editingIndex === currentIndex)());
-	$inspect(isActiveSlot);
-	const placeholderStr = $derived(
+	const hasCurrentLog = $derived(
 		(() => {
-			const e = displayedEntry;
-			if (!e) return '';
-			if (isActiveSlot) return 'What are you doing right now?';
+			if (!currentEntry) return false;
+			return !!currentEntry.body?.trim();
+		})()
+	);
 
-			const { start, end } = slotRange(date, e.startHour, endHourOf);
+	const shouldShowInput = $derived(
+		(() => !isQuietHours && !!currentEntry && !hasCurrentLog)()
+	);
+
+	const inputPlaceholder = 'What are you doing right now?';
+
+	const slotLabel = $derived(
+		(() => {
+			const entry = currentEntry;
+			if (!entry || !shouldShowInput) return '';
+			return rangeLabel(entry);
+		})()
+	);
+
+	const statusText = $derived(
+		(() => {
+			if (isQuietHours) {
+				const parts: string[] = [];
+				if (countdown.hours > 0) {
+					parts.push(`${countdown.hours} hour${countdown.hours === 1 ? '' : 's'}`);
+				}
+				if (countdown.minutes > 0) {
+					parts.push(`${countdown.minutes} minute${countdown.minutes === 1 ? '' : 's'}`);
+				}
+				const suffix = parts.length ? `Come back in ${parts.join(' and ')}.` : 'Come back soon.';
+				return `Goodnight. ${suffix}`;
+			}
+
+			const entry = currentEntry;
+			if (!entry) return '';
+
+			const { start, end } = slotRange(date, entry.startHour, endHourOf);
 			const tNow = now.getTime();
 			const today = ymd(now);
 
-			if (date > today) {
-				const mins = minutesUntil(start, now);
-				return mins === 0
-					? 'Almost time…'
-					: `Come back in ${mins} minute${mins === 1 ? '' : 's'}...`;
-			}
+			const minsUntilStart = minutesUntil(start, now);
+			const minsUntilEnd = minutesUntil(end, now);
+			const labelForMins = (mins: number) =>
+				mins <= 0 ? 'Almost time…' : `Come back in ${mins} minute${mins === 1 ? '' : 's'}...`;
+
+			if (date > today) return labelForMins(minsUntilStart);
 			if (date < today) return 'This hour has passed';
 
-			if (tNow < start.getTime()) {
-				const mins = minutesUntil(start, now);
-				return mins === 0
-					? 'Almost time…'
-					: `Come back in ${mins} minute${mins === 1 ? '' : 's'}...`;
-			}
+			if (tNow < start.getTime()) return labelForMins(minsUntilStart);
 			if (tNow >= end.getTime()) return 'This hour has passed';
 
-			return 'What are you doing right now?';
+			return labelForMins(minsUntilEnd);
+
 		})()
-	);
-	const leadingText = $derived(
-		displayedEntry ? (isActiveSlot ? rangeLabel(displayedEntry) : placeholderStr) : ''
 	);
 
 	let currentBody = $state('');
 	$effect(() => {
-		currentBody = displayedEntry ? (displayedEntry.body ?? '') : '';
+		currentBody = currentEntry ? (currentEntry.body ?? '') : '';
 	});
 
 	function isFuture(entry: HourEntry): boolean {
@@ -926,9 +919,9 @@
 
 	async function onSubmit(e: SubmitEvent) {
 		e.preventDefault();
-		if (!isActiveSlot || editingIndex === null) return;
+		if (!shouldShowInput || currentIndex === null) return;
 
-		const idx = editingIndex;
+		const idx = currentIndex;
 		const entry = entries[idx];
 		if (!entry) return;
 
@@ -977,9 +970,7 @@
 			void backgroundRateAndPersist(dayId, entryDayKey, startHour, trimmed, goal);
 		}
 
-		const isLast = editingIndex === entries.length - 1;
-		editingIndex = isLast ? editingIndex : Math.min(idx + 1, entries.length - 1);
-		currentBody = '';
+		const isLast = currentIndex === entries.length - 1;
 		if (isLast) showReview = true;
 	}
 
@@ -1080,12 +1071,19 @@
 			<div class="flex items-center justify-between gap-4 text-stone-600">
 				<div class="flex items-center justify-between text-stone-600">
 					<div class="flex min-w-0 items-center gap-2">
-						{#if leadingText}
+						{#if shouldShowInput && slotLabel}
 							<span
 								class="font-mono text-lg tracking-widest"
 								in:fly|global={{ y: 4, delay: 300, duration: 200 }}
 							>
-								{leadingText}
+								{slotLabel}
+							</span>
+						{:else if statusText}
+							<span
+								class="font-mono text-lg tracking-widest"
+								in:fly|global={{ y: 4, delay: 300, duration: 200 }}
+							>
+								{statusText}
 							</span>
 						{/if}
 					</div>
@@ -1106,14 +1104,14 @@
 						<DayDots {entries} {circleClassFor} {rangeLabel} />
 					</div>
 				</div>
-			{:else if isActiveSlot || !displayedEntry}
+			{:else if shouldShowInput}
 				<form onsubmit={onSubmit} class="flex flex-row">
 					<input
 						type="text"
-						placeholder={placeholderStr}
+						placeholder={inputPlaceholder}
 						value={currentBody}
 						oninput={onInput}
-						disabled={!isActiveSlot || !displayedEntry}
+						disabled={!shouldShowInput || !currentEntry}
 						class="h-14 w-full border-none bg-transparent pr-2 pl-0 font-mono text-3xl font-light
                                 text-stone-900 ring-0 outline-none placeholder:text-stone-300
                                 focus:border-transparent focus:ring-0 focus:outline-none"
