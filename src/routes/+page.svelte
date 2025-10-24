@@ -2,6 +2,9 @@
 	import ReviewModal from '$lib/components/ReviewModal.svelte';
 	import HistoryModal from '$lib/components/HistoryModal.svelte';
 	import DayDots from '$lib/components/DayDots.svelte';
+	import AutoPostModal from '$lib/components/AutoPostModal.svelte';
+	import AuthModal from '$lib/components/AuthModal.svelte';
+	import HowItWorksModal from '$lib/components/HowItWorksModal.svelte';
 	import { onMount, onDestroy } from 'svelte';
 	import { fade, fly, scale } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
@@ -191,12 +194,10 @@
 
 	async function upsertTimezoneIfNeeded(user_id: string): Promise<void> {
 		try {
-			// browser-only; if somehow called server-side, just bail
 			if (typeof Intl === 'undefined' || typeof window === 'undefined') return;
 
 			const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 
-			// read current value to avoid useless writes
 			const { data: existing, error: readErr } = await supabase
 				.from('users')
 				.select('timezone')
@@ -205,10 +206,7 @@
 
 			if (readErr) {
 				console.warn('profiles read failed (timezone check):', readErr);
-				// fall through to attempt upsert anyway
 			}
-
-			// only write if missing/different
 			if (!existing || existing.timezone !== tz) {
 				const { error: upsertErr } = await supabase.from('users').upsert(
 					{ user_id: user_id, timezone: tz }, // include PK so insert works
@@ -230,14 +228,6 @@
 	function openAuthModal() {
 		authError = '';
 		showAuthModal = true;
-	}
-	function openAutoPostModal() {
-		if (!hasUser) return;
-		xAuthorizeError = '';
-		showAutoPostModal = true;
-		if (userId) {
-			void checkAutoPostAuthorization(userId);
-		}
 	}
 	function openHistoryModal() {
 		if (!hasUser || !userId) {
@@ -429,9 +419,7 @@
 		})()
 	);
 
-	const shouldShowInput = $derived(
-		(() => !isQuietHours && !!currentEntry && !hasCurrentLog)()
-	);
+	const shouldShowInput = $derived((() => !isQuietHours && !!currentEntry && !hasCurrentLog)());
 
 	const inputPlaceholder = 'What are you doing right now?';
 
@@ -476,7 +464,6 @@
 			if (tNow >= end.getTime()) return 'This hour has passed';
 
 			return labelForMins(minsUntilEnd);
-
 		})()
 	);
 
@@ -824,30 +811,6 @@
 		currentBody = (e.currentTarget as HTMLInputElement).value;
 	}
 
-	let isRating = $state(false);
-	let lastVerdict: { ok: boolean; reason: string } | null = null;
-
-	async function rateLog(
-		log: string,
-		goalText: string | null
-	): Promise<{ ok: boolean; reason: string }> {
-		try {
-			const res = await fetch('/api/openai/rate-log', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ log, goal: goalText ?? '' })
-			});
-			if (!res.ok) throw new Error('Failed to rate log');
-			const data = await res.json();
-			const ok = !!data?.ok;
-			const reason = typeof data?.reason === 'string' ? data.reason : '';
-			return { ok, reason };
-		} catch (err) {
-			console.error('Failed to rate log:', err);
-			return { ok: true, reason: `Fallback (error: ${err})` };
-		}
-	}
-
 	async function backgroundRateAndPersist(
 		dayId: string,
 		dayKey: string,
@@ -973,11 +936,6 @@
 		const isLast = currentIndex === entries.length - 1;
 		if (isLast) showReview = true;
 	}
-
-	const basePill =
-		'inline-flex items-center gap-1 rounded-md px-3 py-1 font-mono text-xs transition-colors focus-visible:outline-none';
-	// const neutralPill = `${basePill} border border-stone-300 text-stone-700 hover:bg-stone-100`;
-	// const activePill = `${basePill} bg-stone-900 text-white border border-stone-900`;
 
 	const dots = $derived(entries.map((e) => (e.aligned === undefined ? null : !!e.aligned)));
 	const TOTAL = HISTORY_SLOT_COUNT;
@@ -1128,240 +1086,25 @@
 	{/if}
 </div>
 
-{#if showHIWModal}
-	<div
-		in:fade={{ duration: 200 }}
-		class="fixed inset-0 z-[120] flex items-center justify-center bg-stone-50/70"
-		role="dialog"
-		aria-modal="true"
-		aria-label="Sign in"
-		tabindex="-1"
-		onclick={(e) => {
-			if (!authLoading && e.target === e.currentTarget) closeHIWModal();
-		}}
-		onkeydown={(e) => {
-			if (!authLoading && e.key === 'Escape') closeHIWModal();
-		}}
-	>
-		<div
-			in:scale={{ start: 0.96, duration: 180 }}
-			class="w-full max-w-3xl rounded-3xl bg-stone-50 p-16 text-stone-800"
-			role="document"
-		>
-			<div class="space-y-3 text-stone-700">
-				<div class="flex flex-row items-center justify-between">
-					<h3 class="text-xl font-semibold text-stone-900">How it works</h3>
-
-					<div class="flex flex-wrap items-center justify-center gap-3">
-						<span class="inline-flex items-center gap-1">
-							<span class="inline-block h-3.5 w-3.5 rounded-full bg-emerald-400" aria-hidden="true"
-							></span>
-							<span class="text-xs">Good</span>
-						</span>
-						<span class="inline-flex items-center gap-1">
-							<span class="inline-block h-3.5 w-3.5 rounded-full bg-red-400" aria-hidden="true"
-							></span>
-							<span class="text-xs">Bad</span>
-						</span>
-						<span class="inline-flex items-center gap-1">
-							<span
-								class="inline-block h-3.5 w-3.5 rounded-full border border-stone-400"
-								aria-hidden="true"
-							></span>
-							<span class="text-xs">Empty</span>
-						</span>
-						<span class="inline-flex items-center gap-1">
-							<span
-								class="inline-block h-3.5 w-3.5 rounded-full border border-dashed border-stone-400 bg-transparent"
-								aria-hidden="true"
-							></span>
-							<span class="text-xs">Future</span>
-						</span>
-					</div>
-				</div>
-				<ul class="list-disc space-y-2 pl-5">
-					<li>
-						<span class="text-stone-900">Log each hour (8am–11pm)</span>
-					</li>
-					<li>
-						<span class="text-stone-900">AI rates what you're doing</span>
-					</li>
-					<li>
-						<span class="text-stone-900">Summary at end of day</span>
-					</li>
-					<li>
-						<span class="text-stone-900">Autoposts summary image to Twitter for accountability</span
-						>
-					</li>
-					<li>
-						<span class="text-stone-900">Posts "I didn't do shit today" if no logs</span>
-					</li>
-				</ul>
-			</div>
-			{#if !hasUser}
-				<button
-					type="button"
-					onclick={signInWithTwitter}
-					disabled={authLoading}
-					class="mt-5 flex w-full items-center justify-center gap-2 rounded-xl border border-stone-200 bg-transparent px-4 py-3 text-sm font-medium text-stone-800 transition hover:border-stone-300 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
-				>
-					<svg
-						xmlns="http://www.w3.org/2000/svg"
-						viewBox="0 0 16 16"
-						class="h-5 w-5"
-						fill="currentColor"
-						aria-hidden="true"
-					>
-						<path
-							d="M12.6.75h2.454l-5.36 6.142L16 15.25h-4.937l-3.867-5.07-4.425 5.07H.316l5.733-6.57L0 .75h5.063l3.495 4.633L12.601.75Zm-.86 13.028h1.36L4.323 2.145H2.865z"
-						/>
-					</svg>
-					<span>{authLoading ? 'Redirecting…' : 'Continue with Twitter'}</span>
-				</button>
-			{/if}
-		</div>
-	</div>
-{/if}
-{#if showAuthModal}
-	<div
-		in:fade={{ duration: 200 }}
-		class="fixed inset-0 z-[120] flex items-center justify-center bg-stone-50/80"
-		role="dialog"
-		aria-modal="true"
-		aria-label="Sign in"
-		tabindex="-1"
-		onclick={(e) => {
-			if (!authLoading && e.target === e.currentTarget) closeAuthModal();
-		}}
-		onkeydown={(e) => {
-			if (!authLoading && e.key === 'Escape') closeAuthModal();
-		}}
-	>
-		<div
-			in:scale={{ start: 0.96, duration: 180 }}
-			class="w-full max-w-sm rounded-3xl border border-stone-200 bg-white p-6 text-stone-800 shadow-[0_12px_32px_rgba(15,15,15,0.12)]"
-			role="document"
-		>
-			<div class="flex items-center justify-between">
-				<div class="text-sm font-semibold tracking-tight text-stone-900">Sign in</div>
-				<button
-					type="button"
-					class="rounded-full p-1 text-stone-500 hover:text-stone-800"
-					onclick={closeAuthModal}
-					aria-label="Close sign in"
-					{...{ disabled: authLoading } as any}
-				>
-					<svg
-						viewBox="0 0 24 24"
-						class="h-4 w-4"
-						fill="none"
-						stroke="currentColor"
-						stroke-width="2"
-					>
-						<path d="M6 6l12 12M6 18L18 6" stroke-linecap="round" />
-					</svg>
-				</button>
-			</div>
-
-			<p class="mt-2 text-xs text-stone-500">Continue to save logs and track your progress.</p>
-
-			<button
-				type="button"
-				onclick={signInWithTwitter}
-				disabled={authLoading}
-				class="mt-5 flex w-full items-center justify-center gap-2 rounded-xl border border-stone-200 bg-white px-4 py-3 text-sm font-medium text-stone-800 transition hover:border-stone-300 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
-			>
-				<svg
-					xmlns="http://www.w3.org/2000/svg"
-					viewBox="0 0 16 16"
-					class="h-5 w-5"
-					fill="currentColor"
-					aria-hidden="true"
-				>
-					<path
-						d="M12.6.75h2.454l-5.36 6.142L16 15.25h-4.937l-3.867-5.07-4.425 5.07H.316l5.733-6.57L0 .75h5.063l3.495 4.633L12.601.75Zm-.86 13.028h1.36L4.323 2.145H2.865z"
-					/>
-				</svg>
-				<span>{authLoading ? 'Redirecting…' : 'Continue with Twitter'}</span>
-			</button>
-
-			{#if authError}
-				<p class="mt-3 text-xs text-rose-600">{authError}</p>
-			{/if}
-		</div>
-	</div>
-{/if}
-{#if showAutoPostModal && hasUser}
-	<div
-		in:fade={{ duration: 200 }}
-		class="fixed inset-0 z-[130] flex items-center justify-center bg-stone-50/80"
-		role="dialog"
-		aria-modal="true"
-		aria-label="Authorize auto-posting"
-		tabindex="-1"
-		onclick={(e) => {
-			if (!xAuthorizeLoading && e.target === e.currentTarget) closeAutoPostModal();
-		}}
-		onkeydown={(e) => {
-			if (!xAuthorizeLoading && e.key === 'Escape') closeAutoPostModal();
-		}}
-	>
-		<div
-			in:scale={{ start: 0.96, duration: 180 }}
-			class="w-full max-w-sm rounded-3xl border border-stone-200 bg-white p-6 text-stone-800 shadow-[0_12px_32px_rgba(15,15,15,0.12)]"
-			role="document"
-		>
-			<div class="flex items-center justify-between">
-				<div class="text-sm font-semibold tracking-tight text-stone-900">
-					Authorize auto-posting
-				</div>
-				<button
-					type="button"
-					class="rounded-full p-1 text-stone-500 hover:text-stone-800"
-					onclick={closeAutoPostModal}
-					aria-label="Close auto-post authorization"
-					{...{ disabled: xAuthorizeLoading } as any}
-				>
-					<svg
-						viewBox="0 0 24 24"
-						class="h-4 w-4"
-						fill="none"
-						stroke="currentColor"
-						stroke-width="2"
-					>
-						<path d="M6 6l12 12M6 18L18 6" stroke-linecap="round" />
-					</svg>
-				</button>
-			</div>
-
-			<p class="mt-2 text-xs text-stone-500">
-				Connect your X account so we can share your daily summary automatically.
-			</p>
-
-			<button
-				type="button"
-				onclick={authorizeAutoPost}
-				disabled={xAuthorizeLoading}
-				class="mt-5 flex w-full items-center justify-center gap-2 rounded-xl border border-stone-200 bg-white px-4 py-3 text-sm font-medium text-stone-800 transition hover:border-stone-300 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
-			>
-				<svg
-					xmlns="http://www.w3.org/2000/svg"
-					viewBox="0 0 16 16"
-					class="h-5 w-5"
-					fill="currentColor"
-					aria-hidden="true"
-				>
-					<path
-						d="M12.6.75h2.454l-5.36 6.142L16 15.25h-4.937l-3.867-5.07-4.425 5.07H.316l5.733-6.57L0 .75h5.063l3.495 4.633L12.601.75Zm-.86 13.028h1.36L4.323 2.145H2.865z"
-					/>
-				</svg>
-				<span>{xAuthorizeLoading ? 'Redirecting…' : 'Authorize with X'}</span>
-			</button>
-
-			{#if xAuthorizeError}
-				<p class="mt-3 text-xs text-rose-600">{xAuthorizeError}</p>
-			{/if}
-		</div>
-	</div>
-{/if}
+<HowItWorksModal
+	open={showHIWModal}
+	loading={authLoading}
+	{hasUser}
+	onClose={closeHIWModal}
+	onSignIn={signInWithTwitter}
+/>
+<AuthModal
+	open={showAuthModal}
+	loading={authLoading}
+	error={authError}
+	onSignIn={signInWithTwitter}
+	onClose={closeAuthModal}
+/>
+<AutoPostModal
+	open={showAutoPostModal && hasUser}
+	loading={xAuthorizeLoading}
+	error={xAuthorizeError}
+	onAuthorize={authorizeAutoPost}
+	onClose={closeAutoPostModal}
+/>
 <HistoryModal open={showHistory} onClose={() => (showHistory = false)} />
