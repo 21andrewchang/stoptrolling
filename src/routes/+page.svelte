@@ -6,7 +6,7 @@
 	import AuthModal from '$lib/components/AuthModal.svelte';
 	import HowItWorksModal from '$lib/components/HowItWorksModal.svelte';
 	import { onMount, onDestroy } from 'svelte';
-	import { fly, scale } from 'svelte/transition';
+	import { fly } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
 	import { dayLog, type HourEntry, endHourOf, defaultHours } from '$lib/stores/day-log';
 	import { historyStore, historyLoading, historyLoaded, historyError } from '$lib/stores/history';
@@ -16,10 +16,20 @@
 	import { PUBLIC_X_CLIENT_ID, PUBLIC_X_REDIRECT_URI } from '$env/static/public';
 	import type { User } from '@supabase/supabase-js';
 	import { get } from 'svelte/store';
+	import { makeDayService } from '$lib/services/day';
+	import { makeRatingService } from '$lib/services/rating';
+	import { makeSessionService } from '$lib/services/session';
+	import { buildRandomString, createPkceChallenge, persistPkceState } from '$lib/xoauth/client';
+	import type { PageData } from './$types';
 
 	const date = ymd(new Date());
 	const HISTORY_SLOT_COUNT = 16;
 
+	const daySvc = makeDayService(supabase);
+	const ratingSvc = makeRatingService(supabase, fetch);
+	const sessionSvc = makeSessionService(supabase, fetch);
+
+	const { data } = $props<{ data: PageData }>();
 	let dayId = $state<string | null>(null);
 	let firstName = $state<string | null>(null);
 	let userEmail = $state<string | null>(null);
@@ -36,6 +46,22 @@
 	let xAuthorizeError = $state('');
 	let historyFetchPromise: Promise<void> | null = null;
 	let historyForUser: string | null = null;
+
+	const initialGoal = data?.day?.goal ?? '';
+	const initialHours = data?.day?.hours ?? defaultHours();
+
+	if (data?.user) {
+		hasUser = true;
+		userId = data.user.id;
+		userEmail = typeof data.user.email === 'string' ? data.user.email : null;
+		authResolved = true;
+	}
+
+	if (data?.day) {
+		dayId = data.day.id;
+		dayLog.replaceHours(date, initialHours);
+		dayLog.setGoal(date, initialGoal);
+	}
 
 	function deriveFirstName(user: User): string | null {
 		const metadata = (user.user_metadata ?? {}) as Record<string, unknown>;
@@ -56,140 +82,60 @@
 		return null;
 	}
 
-	async function ensureDayId(): Promise<string | null> {
-		let userRes: Awaited<ReturnType<typeof supabase.auth.getUser>>['data'] | undefined;
-		let authErr: Awaited<ReturnType<typeof supabase.auth.getUser>>['error'] | null | undefined;
+	async function ensureTodayRecord(): Promise<{ id: string; goal: string } | null> {
 		try {
-			const result = await supabase.auth.getUser();
-			userRes = result.data;
-			console.log('user: ', userRes);
-			authErr = result.error;
-		} catch (err) {
-			console.error('Supabase getUser exception:', err);
-			firstName = null;
-			userEmail = null;
-			hasUser = false;
-			authResolved = true;
-			return null;
-		}
-		if (authErr) {
-			console.error('auth error', authErr);
-			firstName = null;
-			userEmail = null;
-			hasUser = false;
-			authResolved = true;
-			return null;
-		}
-		const user = userRes?.user ?? null;
-		const user_id = user?.id;
-		if (!user_id || !user) {
-			firstName = null;
-			userEmail = null;
-			hasUser = false;
-			authResolved = true;
-			return null;
-		}
-
-		firstName = deriveFirstName(user);
-		userEmail = typeof user.email === 'string' ? user.email : null;
-		hasUser = true;
-		userId = user_id;
-		authResolved = true;
-		console.log('authresolved: ', authResolved);
-
-		await syncServerSupabaseSession();
-		await upsertTimezoneIfNeeded(user_id);
-		await checkAutoPostAuthorization(user_id);
-		void loadHistoryInBackground(user_id);
-
-		const { data, error } = await supabase
-			.from('days')
-			.upsert({ user_id, date }, { onConflict: 'user_id,date' })
-			.select('id')
-			.single();
-
-		if (error) {
-			console.error('ensureDayId upsert failed:', error);
-			return null;
-		}
-		return data.id;
-	}
-
-	type DbHourRow = {
-		start_hour: number;
-		body: string | null;
-		aligned: boolean | null;
-	};
-
-	async function loadDayFromDatabase(
-		id: string
-	): Promise<{ goal: string; hours: HourEntry[] } | null> {
-		try {
-			const [dayRes, hoursRes] = await Promise.all([
-				supabase.from('days').select('goal').eq('id', id).maybeSingle(),
-				supabase
-					.from('day_hours')
-					.select('start_hour, body, aligned')
-					.eq('day_id', id)
-					.order('start_hour', { ascending: true })
-			]);
-
-			if (dayRes.error) {
-				console.error('Supabase day load failed:', dayRes.error);
-				return null;
-			}
-			if (hoursRes.error) {
-				console.error('Supabase day_hours load failed:', hoursRes.error);
+			const { user, error } = await sessionSvc.getAuthedUser();
+			if (error || !user) {
+				if (error) console.error('Supabase getUser error:', error);
+				firstName = null;
+				userEmail = null;
+				hasUser = false;
+				userId = null;
+				authResolved = true;
 				return null;
 			}
 
-			const goalFromDb = (dayRes.data?.goal ?? '') as string;
-			const rows = (hoursRes.data ?? []) as DbHourRow[];
-			const rowMap = new Map<number, DbHourRow>();
-			for (const row of rows) {
-				const startHour =
-					typeof row.start_hour === 'number' ? row.start_hour : Number(row.start_hour);
-				if (Number.isNaN(startHour)) continue;
-				rowMap.set(startHour, row);
-			}
+			firstName = deriveFirstName(user);
+			userEmail = typeof user.email === 'string' ? user.email : null;
+			hasUser = true;
+			userId = user.id;
+			authResolved = true;
 
-			const fallback = defaultHours();
-			const hours = fallback.map((slot) => {
-				const remote = rowMap.get(slot.startHour);
-				if (!remote) {
-					return { ...slot };
-				}
+			await sessionSvc.syncServerSession();
+			await upsertTimezoneIfNeeded(user.id);
+			await checkAutoPostAuthorization(user.id);
+			void loadHistoryInBackground(user.id);
 
-				const entry: HourEntry = {
-					startHour: slot.startHour,
-					body: remote.body ?? ''
-				};
-
-				if (remote.aligned !== null && remote.aligned !== undefined) {
-					entry.aligned = remote.aligned;
-				}
-
-				return entry;
-			});
-
-			return { goal: goalFromDb, hours };
+			const today = await daySvc.ensureToday(user.id);
+			dayId = today.id;
+			return { id: today.id, goal: today.goal };
 		} catch (err) {
-			console.error('Failed to load day from Supabase:', err);
+			console.error('ensureTodayRecord failed:', err);
+			firstName = null;
+			userEmail = null;
+			hasUser = false;
+			userId = null;
+			authResolved = true;
 			return null;
 		}
 	}
 
 	async function syncFromDatabase(): Promise<void> {
-		const id = await ensureDayId();
-		dayId = id;
-		if (!id) return;
+		const today = await ensureTodayRecord();
+		if (!today) return;
 
-		const remote = await loadDayFromDatabase(id);
-		if (!remote) return;
+		try {
+			const hours = await daySvc.loadDayHours(today.id);
+			dayLog.replaceHours(date, hours);
+			dayLog.setGoal(date, today.goal);
+		} catch (err) {
+			console.error('Failed to load day data:', err);
+		}
+	}
 
-		console.log('Loaded day from database', { date, ...remote });
-		dayLog.replaceHours(date, remote.hours);
-		dayLog.setGoal(date, remote.goal);
+	async function ensureDayId(): Promise<string | null> {
+		const today = await ensureTodayRecord();
+		return today?.id ?? null;
 	}
 
 	async function upsertTimezoneIfNeeded(user_id: string): Promise<void> {
@@ -338,10 +284,10 @@
 	}
 
 	let showReview = $state(false);
-	let goal = $state('');
-	let goalDraft = $state('');
+	let goal = $state(initialGoal);
+	let goalDraft = $state(initialGoal);
 	let goalSaving = $state(false);
-	let entries = $state<HourEntry[]>([]);
+	let entries = $state<HourEntry[]>(initialHours);
 	let now = $state(new Date());
 	let xAuthorizeLoading = $state(false);
 
@@ -488,102 +434,6 @@
 		'offline.access',
 		'media.write'
 	];
-	const PKCE_CHARSET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
-
-	function base64UrlEncode(buffer: ArrayBuffer): string {
-		if (typeof btoa !== 'function') {
-			throw new Error('Base64 encoding is unavailable in this environment');
-		}
-		const bytes = new Uint8Array(buffer);
-		let binary = '';
-		bytes.forEach((b) => (binary += String.fromCharCode(b)));
-		return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-	}
-
-	function buildRandomString(length: number, alphabet: string): string {
-		if (typeof window === 'undefined' || !window.crypto?.getRandomValues) {
-			throw new Error('Secure randomness unavailable in this environment');
-		}
-		const randomValues = new Uint8Array(length);
-		window.crypto.getRandomValues(randomValues);
-		const chars = alphabet.length;
-		let out = '';
-		for (let i = 0; i < length; i++) {
-			out += alphabet[randomValues[i] % chars];
-		}
-		return out;
-	}
-
-	function createPkceVerifier(): string {
-		return buildRandomString(64, PKCE_CHARSET);
-	}
-
-	async function createPkceChallenge(verifier: string): Promise<string> {
-		if (!window.crypto?.subtle) {
-			throw new Error('PKCE challenge generation requires Web Crypto support');
-		}
-		const data = new TextEncoder().encode(verifier);
-		const digest = await window.crypto.subtle.digest('SHA-256', data);
-		return base64UrlEncode(digest);
-	}
-
-	function persistPkceState(verifier: string, stateValue: string): void {
-		try {
-			if (typeof localStorage !== 'undefined') {
-				localStorage.setItem('stoptrolling:x:code_verifier', verifier);
-				localStorage.setItem('stoptrolling:x:oauth_state', stateValue);
-			}
-
-			const maxAge = 600; // 10 minutes
-			const secure = location.protocol === 'https:' ? '; Secure' : '';
-			document.cookie = `x_pkce_verifier=${encodeURIComponent(verifier)}; Path=/; Max-Age=${maxAge}; SameSite=Lax${secure}`;
-			document.cookie = `x_oauth_state=${encodeURIComponent(stateValue)}; Path=/; Max-Age=${maxAge}; SameSite=Lax${secure}`;
-		} catch (err) {
-			console.warn('Failed to persist X OAuth state', err);
-		}
-	}
-
-	async function syncServerSupabaseSession(): Promise<boolean> {
-		try {
-			const {
-				data: { session },
-				error
-			} = await supabase.auth.getSession();
-			console.log(session);
-
-			if (error || !session) {
-				console.error('Failed to fetch Supabase session for server sync', error);
-				return false;
-			}
-
-			const { access_token: accessToken, refresh_token: refreshToken } = session;
-
-			if (typeof accessToken !== 'string' || typeof refreshToken !== 'string') {
-				console.error('Supabase session missing tokens for server sync');
-				return false;
-			}
-
-			const res = await fetch('/api/auth/session', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					access_token: accessToken,
-					refresh_token: refreshToken
-				}),
-				credentials: 'same-origin'
-			});
-
-			if (!res.ok) {
-				console.error('Server Supabase session sync failed', await res.text());
-				return false;
-			}
-
-			return true;
-		} catch (err) {
-			console.error('Unexpected error syncing Supabase session to server', err);
-			return false;
-		}
-	}
 
 	async function checkAutoPostAuthorization(user_id: string): Promise<boolean> {
 		try {
@@ -754,17 +604,21 @@
 		try {
 			xAuthorizeLoading = true;
 			xAuthorizeError = '';
-			const serverSessionSynced = await syncServerSupabaseSession();
+			const serverSessionSynced = await sessionSvc.syncServerSession();
 			if (!serverSessionSynced) {
 				xAuthorizeLoading = false;
 				xAuthorizeError = 'We could not confirm your Supabase session. Please sign in again.';
 				return;
 			}
 
-			const verifier = createPkceVerifier();
+			const verifier = buildRandomString(64);
 			const challenge = await createPkceChallenge(verifier);
-			const stateValue = buildRandomString(32, PKCE_CHARSET);
-			persistPkceState(verifier, stateValue);
+			const stateValue = buildRandomString(32);
+			try {
+				persistPkceState(verifier, stateValue);
+			} catch (err) {
+				console.warn('Failed to persist X OAuth state', err);
+			}
 
 			const params = new URLSearchParams({
 				response_type: 'code',
@@ -819,22 +673,7 @@
 		goalText: string | null
 	): Promise<void> {
 		try {
-			const res = await fetch('/api/openai/rate-log', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ log: body, goal: goalText ?? '' })
-			});
-			if (!res.ok) throw new Error(await res.text());
-			const data = await res.json();
-			const aligned: boolean = !!data?.ok;
-
-			const { error } = await supabase
-				.from('day_hours')
-				.upsert(
-					{ day_id: dayId, start_hour: startHour, body, aligned },
-					{ onConflict: 'day_id,start_hour' }
-				);
-			if (error) throw error;
+			const aligned = await ratingSvc.rateAndPersist(dayId, startHour, body, goalText ?? '');
 
 			const recIdx = entries.findIndex((e) => e.startHour === startHour);
 			if (recIdx !== -1) dayLog.patchHour(dayKey, recIdx, { aligned });
@@ -863,8 +702,7 @@
 			if (!dayId) {
 				console.warn('No dayId available; storing goal locally only.');
 			} else {
-				const { error } = await supabase.from('days').update({ goal: trimmed }).eq('id', dayId);
-				if (error) throw error;
+				await daySvc.upsertGoal(dayId, trimmed);
 				synced = true;
 			}
 		} catch (err) {
@@ -901,18 +739,7 @@
 			if (!dayId) {
 				console.warn('No dayId available; storing note locally only.');
 			} else {
-				const { error } = await supabase.from('day_hours').upsert(
-					{
-						day_id: dayId,
-						start_hour: startHour,
-						body: trimmed
-					},
-					{ onConflict: 'day_id,start_hour' }
-				);
-
-				if (error) {
-					throw error;
-				}
+				await daySvc.upsertHour(dayId, startHour, trimmed);
 				synced = true;
 			}
 		} catch (err) {
