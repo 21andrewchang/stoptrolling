@@ -6,7 +6,7 @@
 	import AuthModal from '$lib/components/AuthModal.svelte';
 	import HowItWorksModal from '$lib/components/HowItWorksModal.svelte';
 	import { onMount, onDestroy } from 'svelte';
-	import { fade, fly, scale } from 'svelte/transition';
+	import { fly, scale } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
 	import { dayLog, type HourEntry, endHourOf, defaultHours } from '$lib/stores/day-log';
 	import { historyStore, historyLoading, historyLoaded, historyError } from '$lib/stores/history';
