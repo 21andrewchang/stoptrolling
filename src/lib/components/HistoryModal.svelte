@@ -76,19 +76,19 @@
 				{:else}
 					<ul class="space-y-4">
 						{#each $historyStore as day (day.id)}
-							<li class="rounded-2xl border border-stone-200 bg-stone-50 p-4">
+							<li class="rounded-xl border border-stone-200 bg-stone-50 p-4">
 								<div class="flex items-center justify-between">
 									<span class="font-mono text-sm text-stone-600">{shortDate(day.date)}</span>
 									<span class="rounded-lg bg-stone-900 px-2.5 py-1 font-mono text-sm text-white">
 										{day.score}
 									</span>
 								</div>
-								<div class="mt-6 flex w-full items-center justify-center">
-									<div class="flex flex-wrap gap-3">
+								<div class="mt-3 flex w-full items-center">
+									<div class="flex w-full justify-between">
 										{#each day.dots as dot, index}
 											<div class="relative flex flex-col items-center pb-3">
 												<span
-													class={`inline-block h-5 w-5 rounded-full ${dotClass(dot)}`}
+													class={`inline-block h-6 w-6 rounded-full ${dotClass(dot)}`}
 													aria-label={`Hour dot ${index + 1}`}
 												></span>
 											</div>
