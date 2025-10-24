@@ -226,7 +226,7 @@
 				<div class="flex flex-row gap-2">
 					<button
 						type="button"
-						class="flex items-center gap-2 rounded-md bg-stone-900 px-2 text-xs font-medium text-white transition hover:bg-stone-800 focus:ring-2 focus:ring-stone-400 focus:outline-none disabled:cursor-not-allowed disabled:opacity-70"
+						class="flex items-center gap-2 rounded-md bg-stone-900 px-3 text-xs font-medium text-white transition hover:bg-stone-800 focus:ring-2 focus:ring-stone-400 focus:outline-none disabled:cursor-not-allowed disabled:opacity-70"
 						onclick={postToX}
 						disabled={postLoading}
 						aria-label="Share this summary to X"
