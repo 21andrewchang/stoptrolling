@@ -349,7 +349,6 @@
 	}
 
 	let showReview = $state(false);
-
 	let goal = $state('');
 	let goalDraft = $state('');
 	let goalSaving = $state(false);
@@ -1125,25 +1124,6 @@
 					<DayDots {entries} {circleClassFor} {rangeLabel} />
 				</div>
 			{/if}
-			<!-- {:else}
-				<div class="mt-2 flex w-full items-center gap-2">
-					<button
-						type="button"
-						class={activePill + ' h-12 flex-1 justify-center'}
-						onclick={() => recordAlignment(true)}
-					>
-						<span class="self-center text-lg">Good</span>
-					</button>
-
-					<button
-						type="button"
-						class={neutralPill + ' h-12 flex-1 justify-center text-xl'}
-						onclick={() => recordAlignment(false)}
-					>
-						<span class="self-center text-lg">Bad</span>
-					</button>
-				</div>
-			{/if} -->
 		</div>
 	{/if}
 </div>
