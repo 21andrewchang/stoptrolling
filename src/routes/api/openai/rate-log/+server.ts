@@ -41,6 +41,8 @@ export const POST: RequestHandler = async ({ request }) => {
             '- ok=false if the activity is procrastination, clearly trolling, spam, abusive, social media (unless related to work), watching unproductive videos, playing video games, etc.',
             '- If ambiguous, do your best to rate it based on the context given.',
             '- If the daily goal is provided, weigh whether the activity advances that goal; however, truly necessary neutral tasks can still be ok=true.',
+            '- If the user provides a goal make sure to be extremely critical of whether the activity aligns with their goal for today aside from eating and exercise.',
+            '- For example, if the user has a goal to study for a big midterm but they are doing homework for another subject it should be false since the priority is to study',
             'Return ONLY the JSON specified by the provided schema.'
         ].join('\n');
 
