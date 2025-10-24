@@ -200,7 +200,7 @@
 			const { data: existing, error: readErr } = await supabase
 				.from('users')
 				.select('timezone')
-				.eq('id', user_id)
+				.eq('user_id', user_id)
 				.maybeSingle();
 
 			if (readErr) {
