@@ -25,14 +25,14 @@
 		<div class="flex items-center justify-between text-stone-600">
 			<div
 				class="flex min-w-0 items-center gap-2"
-				in:fly|global={{ y: 4, delay: 300, duration: 200 }}
+				in:fly|global={{ y: 4, delay: 100, duration: 200 }}
 			>
 				<span class="font-mono text-lg tracking-widest">{slotLabel}</span>
 			</div>
 		</div>
 	</div>
 
-	<form onsubmit={onSubmit} class="flex flex-row">
+	<form onsubmit={onSubmit} class="flex flex-row" in:fly|global={{ y: 4, duration: 200 }}>
 		<input
 			type="text"
 			placeholder={inputPlaceholder}

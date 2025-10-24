@@ -860,7 +860,6 @@
 				<InputState
 					{showInput}
 					{slotLabel}
-					{statusText}
 					{inputPlaceholder}
 					{currentBody}
 					{currentEntry}
