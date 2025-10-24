@@ -1017,13 +1017,13 @@
 		>
 			<span class="font-semibold text-stone-800">{date.slice(5)}</span>
 		</button>
-		<form class="max-w-[50vw]" onsubmit={submitGoal} aria-label="Set today's goal">
+		<form class="max-w-[60vw]" onsubmit={submitGoal} aria-label="Set today's goal">
 			<input
-				class="w-full rounded-md border-0 bg-transparent px-2 py-1 font-mono text-sm tracking-tight text-stone-600 placeholder:text-stone-400 focus:ring-0 focus:outline-none disabled:opacity-60"
+				class="w-full rounded-md border-0 bg-transparent px-2 py-1 font-mono text-sm tracking-tighter text-stone-600 placeholder:text-stone-400 focus:ring-0 focus:outline-none disabled:opacity-60"
 				type="text"
 				name="goal"
 				bind:value={goalDraft}
-				placeholder="Set today's goal..."
+				placeholder={isQuietHours ? "Set tomorrow's goal..." : "Set today's goal..."}
 				autocomplete="off"
 				disabled={goalSaving}
 			/>
