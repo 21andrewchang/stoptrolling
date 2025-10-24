@@ -1071,7 +1071,7 @@
 						{#if leadingText}
 							<span
 								class="font-mono text-lg tracking-widest"
-								in:fly|global={{ y: 4, delay: 400, duration: 200 }}
+								in:fly|global={{ y: 4, delay: 300, duration: 200 }}
 							>
 								{leadingText}
 							</span>
