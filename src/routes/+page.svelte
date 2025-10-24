@@ -4,6 +4,7 @@
 	import DayDots from '$lib/components/DayDots.svelte';
 	import { onMount, onDestroy } from 'svelte';
 	import { fade, fly, scale } from 'svelte/transition';
+	import { cubicOut } from 'svelte/easing';
 	import { dayLog, type HourEntry, endHourOf, defaultHours } from '$lib/stores/day-log';
 	import { historyStore, historyLoading, historyLoaded, historyError } from '$lib/stores/history';
 	import type { HistoryDay } from '$lib/stores/history';
@@ -250,6 +251,8 @@
 		pendingBody = null;
 		currentBody = '';
 		goal = '';
+		goalDraft = '';
+		goalSaving = false;
 		entries = [];
 		showAutoPostModal = false;
 		showHistory = false;
@@ -315,13 +318,17 @@
 	let showReview = $state(false);
 
 	let goal = $state('');
+	let goalDraft = $state('');
+	let goalSaving = $state(false);
 	let entries = $state<HourEntry[]>([]);
 	let now = $state(new Date());
 	let xAuthorizeLoading = $state(false);
 
 	$effect(() => {
 		const rec = $dayLog[date];
-		goal = rec?.goal ?? '';
+		const nextGoal = rec?.goal ?? '';
+		goal = nextGoal;
+		goalDraft = nextGoal;
 		entries = rec?.hours ?? [];
 	});
 
@@ -779,6 +786,36 @@
 	let pendingIndex = $state<number | null>(null);
 	let pendingBody = $state<string | null>(null);
 
+	async function submitGoal(e: SubmitEvent) {
+		e.preventDefault();
+		const trimmed = goalDraft.trim();
+		if (!trimmed) return;
+
+		let synced = false;
+
+		try {
+			goalSaving = true;
+			if (!dayId) dayId = await ensureDayId();
+			if (!dayId) {
+				console.warn('No dayId available; storing goal locally only.');
+			} else {
+				const { error } = await supabase.from('days').update({ goal: trimmed }).eq('id', dayId);
+				if (error) throw error;
+				synced = true;
+			}
+		} catch (err) {
+			console.error('Supabase goal update failed:', err);
+		} finally {
+			goalSaving = false;
+		}
+
+		dayLog.setGoal(date, trimmed);
+
+		if (!synced) {
+			console.warn('Goal saved locally; will sync once Supabase is available.');
+		}
+	}
+
 	async function onSubmit(e: SubmitEvent) {
 		e.preventDefault();
 		if (!isActiveSlot || editingIndex === null) return;
@@ -910,40 +947,38 @@
 />
 
 {#if authResolved}
-	<header class="fixed top-4 left-6 z-10">
+	<header
+		class="fixed top-4 left-6 z-10 flex flex-row"
+		transition:fly|global={{ y: 2, delay: 400, duration: 800, easing: cubicOut }}
+	>
 		<button
 			type="button"
-			class="flex items-center gap-2 rounded-lg bg-transparent px-2 py-1 font-mono text-sm text-stone-600 transition hover:text-stone-800 focus:outline-none"
+			class="flex items-center gap-2 rounded-lg bg-transparent px-2 py-1 font-mono text-sm text-stone-800 transition hover:text-stone-800 focus:outline-none"
 			onclick={openHistoryModal}
 			aria-label="View history"
 		>
-			<span class="font-semibold text-stone-500">{date.slice(5)}</span>
-			<span
-				class="max-w-[50vw] truncate"
-				transition:fly|global={{ y: 4, delay: 400, duration: 200 }}
-				>{goal ? `I will ${goal}` : ''}</span
-			>
+			<span class="font-semibold text-stone-800">{date.slice(5)}</span>
 		</button>
+		<form class="max-w-[50vw]" onsubmit={submitGoal} aria-label="Set today's goal">
+			<input
+				class="w-full rounded-md border-0 bg-transparent px-2 py-1 font-mono text-sm tracking-tight text-stone-600 placeholder:text-stone-400 focus:ring-0 focus:outline-none disabled:opacity-60"
+				type="text"
+				name="goal"
+				bind:value={goalDraft}
+				placeholder="Set today's goal..."
+				autocomplete="off"
+				disabled={goalSaving}
+			/>
+		</form>
 	</header>
 
-	<header class="fixed top-4 right-6 z-10 flex flex-row items-center gap-6">
+	<header
+		class="fixed top-4 right-6 z-10 flex flex-row items-center gap-6"
+		transition:fly|global={{ y: 2, delay: 400, duration: 800, easing: cubicOut }}
+	>
 		<button type="button" class="flex items-center" onclick={openHIWModal}>
 			<span class="font-mono text-sm tracking-tighter text-stone-500">How it works</span>
 		</button>
-
-		{#if hasUser && !hasXAuthorization}
-			<button
-				type="button"
-				class="flex items-center"
-				aria-label="Authorize auto-posting via X OAuth"
-				onclick={openAutoPostModal}
-				disabled={xAuthorizeLoading}
-			>
-				<span class="font-mono text-sm tracking-tighter text-stone-500">
-					{xAuthorizeLoading ? 'Authorizing…' : 'Authorize auto-post'}
-				</span>
-			</button>
-		{/if}
 
 		<button
 			type="button"
@@ -1056,7 +1091,7 @@
 {#if showHIWModal}
 	<div
 		in:fade={{ duration: 200 }}
-		class="fixed inset-0 z-[120] flex items-center justify-center bg-stone-50"
+		class="fixed inset-0 z-[120] flex items-center justify-center bg-stone-50/70"
 		role="dialog"
 		aria-modal="true"
 		aria-label="Sign in"
@@ -1070,7 +1105,7 @@
 	>
 		<div
 			in:scale={{ start: 0.96, duration: 180 }}
-			class="w-full max-w-lg rounded-3xl p-6 text-stone-800"
+			class="w-full max-w-3xl rounded-3xl bg-stone-50 p-16 text-stone-800"
 			role="document"
 		>
 			<div class="space-y-3 text-stone-700">
