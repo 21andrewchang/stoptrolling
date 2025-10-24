@@ -279,7 +279,6 @@
 		userId = null;
 		hasXAuthorization = false;
 		showReview = false;
-		reviewIndex = null;
 		editingIndex = null;
 		pendingIndex = null;
 		pendingBody = null;
@@ -358,6 +357,33 @@
 	let now = $state(new Date());
 	let xAuthorizeLoading = $state(false);
 
+    const isQuietHours = $derived((() => {
+        const h = now.getHours();
+        return h < 8;
+    })());
+
+    function nextEightAM(from: Date): Date {
+        const d = new Date(from);
+        const eight = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 8, 0, 0, 0);
+        if (d.getHours() < 8) return eight;
+        const tomorrow = new Date(eight);
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        return tomorrow;
+    }
+
+    const msUntil8 = $derived((() => {
+        if (!isQuietHours) return 0;
+        return Math.max(0, nextEightAM(now).getTime() - now.getTime());
+    })());
+
+    const countdown = $derived((() => {
+        if (!isQuietHours || msUntil8 <= 0) return { hours: 0, minutes: 0 };
+        const totalMinutes = Math.ceil(msUntil8 / 60000);
+        const hours = Math.floor(totalMinutes / 60);
+        const minutes = totalMinutes % 60;
+        return { hours, minutes };
+    })());
+
 	$effect(() => {
 		const rec = $dayLog[date];
 		const nextGoal = rec?.goal ?? '';
@@ -386,12 +412,10 @@
 		})()
 	);
 	let editingIndex = $state<number | null>(null);
-	let reviewIndex = $state<number | null>(null);
 
 	$effect(() => {
 		if (entries.length === 0) {
 			editingIndex = null;
-			reviewIndex = null;
 			return;
 		}
 
@@ -401,37 +425,20 @@
 			const h = now.getHours();
 			if (h < START) {
 				editingIndex = 0;
-				reviewIndex = null;
 				return;
 			}
 		}
 
 		if (currentIndex === null) {
 			editingIndex = null;
-			reviewIndex = null;
 			return;
 		}
 
 		const cur = entries[currentIndex];
 		const hasBody = !!cur?.body?.trim();
-		const reviewed = cur?.aligned !== undefined;
-		const needsReview = hasBody && !reviewed;
 
-		if (needsReview) {
+		if (!hasBody && editingIndex !== currentIndex) {
 			editingIndex = currentIndex;
-			reviewIndex = reviewIndex ?? currentIndex;
-			return;
-		}
-
-		const target =
-			hasBody && reviewed ? Math.min(currentIndex + 1, entries.length - 1) : currentIndex;
-
-		if (editingIndex === null || editingIndex < target) {
-			editingIndex = target;
-		}
-
-		if (editingIndex !== currentIndex) {
-			reviewIndex = null;
 		}
 	});
 
@@ -817,6 +824,61 @@
 		currentBody = (e.currentTarget as HTMLInputElement).value;
 	}
 
+    let isRating = $state(false);
+    let lastVerdict: { ok: boolean, reason: string } | null = null;
+
+    async function rateLog(log: string): Promise<{ ok: boolean, reason: string }> {
+        try {
+            const res = await fetch('/api/openai/rate-log', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ log })
+            });
+            if (!res.ok) throw new Error('Failed to rate log');
+            const data = await res.json();
+            const ok = !!data?.ok;
+            const reason = typeof data?.reason === 'string' ? data.reason : '';
+            return { ok, reason };
+        } catch (err) {
+            console.error('Failed to rate log:', err);
+            return { ok: true, reason: `Fallback (error: ${err})` };
+        }
+    }
+
+    async function backgroundRateAndPersist(dayId: string, dayKey: string, startHour: number, body: string): Promise<void> {
+        try {
+            const res = await fetch('/api/openai/rate-log', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ log: body })
+            });
+            if (!res.ok) throw new Error(await res.text());
+            const data = await res.json();
+            const aligned: boolean = !!data?.ok;
+
+            const { error } = await supabase.from('day_hours').upsert(
+					{
+						day_id: dayId,
+						start_hour: startHour,
+						body: body,
+						aligned: aligned
+					},
+					{ onConflict: 'day_id,start_hour' }
+				);
+            if (error) throw error;
+
+            const recIdx = entries.findIndex((e) => e.startHour === startHour);
+            if (recIdx !== -1) dayLog.patchHour(dayKey, recIdx, { aligned });
+
+            if (pendingIndex === recIdx) {
+                pendingIndex = null;
+                pendingBody = null;
+            }
+        } catch (err) {
+            console.error('backgroundRateAndPersist failed:', err);
+        }
+    }
+
 	let pendingIndex = $state<number | null>(null);
 	let pendingBody = $state<string | null>(null);
 
@@ -859,8 +921,10 @@
 		if (!entry) return;
 
 		const trimmed = currentBody.trim();
+        if (!trimmed) return;
+
 		const startHour = entry.startHour;
-		const aligned = entry.aligned ?? null;
+        const entryDayKey = date;
 
 		let synced = false;
 
@@ -874,7 +938,6 @@
 						day_id: dayId,
 						start_hour: startHour,
 						body: trimmed,
-						aligned
 					},
 					{ onConflict: 'day_id,start_hour' }
 				);
@@ -888,8 +951,7 @@
 			console.error('Supabase day_hours upsert failed:', err);
 		}
 
-		dayLog.patchHour(date, idx, { body: trimmed });
-		reviewIndex = idx;
+		dayLog.patchHour(entryDayKey, idx, { body: trimmed });
 
 		if (!synced) {
 			pendingIndex = idx;
@@ -898,70 +960,21 @@
 			pendingIndex = null;
 			pendingBody = null;
 		}
-	}
 
-	async function recordAlignment(isAligned: boolean) {
-		if (reviewIndex === null) return;
-		const idx = reviewIndex;
+        if (dayId) {
+            void backgroundRateAndPersist(dayId, entryDayKey, startHour, trimmed);
+        }
 
-		const bodyToSave =
-			pendingIndex === idx && pendingBody !== null ? pendingBody : (entries[idx]?.body ?? '');
-
-		const entry = entries[idx];
-		if (!entry) return;
-
-		const startHour = entry.startHour;
-
-		let synced = false;
-
-		try {
-			if (!dayId) dayId = await ensureDayId();
-			if (!dayId) {
-				console.warn('No dayId available; skipping remote alignment upsert.');
-			} else {
-				const { error } = await supabase.from('day_hours').upsert(
-					{
-						day_id: dayId,
-						start_hour: startHour,
-						body: bodyToSave,
-						aligned: isAligned
-					},
-					{ onConflict: 'day_id,start_hour' }
-				);
-				if (error) {
-					throw error;
-				}
-				synced = true;
-			}
-		} catch (err) {
-			console.error('Supabase day_hours upsert exception:', err);
-		}
-
-		dayLog.patchHour(date, idx, { body: bodyToSave, aligned: isAligned });
-
-		if (synced) {
-			if (pendingIndex === idx) {
-				pendingIndex = null;
-				pendingBody = null;
-			}
-		} else {
-			pendingIndex = idx;
-			pendingBody = bodyToSave;
-		}
-
-		reviewIndex = null;
-		const isLast = editingIndex === entries.length - 1;
-		if (isLast) {
-			showReview = true;
-		} else {
-			editingIndex = Math.min(idx + 1, entries.length - 1);
-		}
+        const isLast = editingIndex === entries.length - 1;
+        editingIndex = isLast ? editingIndex : Math.min(idx + 1, entries.length - 1);
+        currentBody = '';
+        if (isLast) showReview = true;
 	}
 
 	const basePill =
 		'inline-flex items-center gap-1 rounded-md px-3 py-1 font-mono text-xs transition-colors focus-visible:outline-none';
-	const neutralPill = `${basePill} border border-stone-300 text-stone-700 hover:bg-stone-100`;
-	const activePill = `${basePill} bg-stone-900 text-white border border-stone-900`;
+	// const neutralPill = `${basePill} border border-stone-300 text-stone-700 hover:bg-stone-100`;
+	// const activePill = `${basePill} bg-stone-900 text-white border border-stone-900`;
 
 	const dots = $derived(entries.map((e) => (e.aligned === undefined ? null : !!e.aligned)));
 	const TOTAL = HISTORY_SLOT_COUNT;
@@ -1063,43 +1076,45 @@
 								{leadingText}
 							</span>
 						{/if}
-
-						{#if reviewIndex !== null && entries[reviewIndex]?.body?.trim()}
-							<span class="text-stone-300 select-none">•</span>
-							<span
-								class="truncate font-mono text-lg text-stone-800"
-								in:fly={{ y: 6, duration: 180 }}
-								title={entries[reviewIndex].body}
-							>
-								{entries[reviewIndex].body}
-							</span>
-						{/if}
 					</div>
 				</div>
 			</div>
 
-			{#if reviewIndex === null}
-				{#if isActiveSlot || !displayedEntry}
-					<form onsubmit={onSubmit} class="flex flex-row">
-						<input
-							type="text"
-							placeholder={placeholderStr}
-							value={currentBody}
-							oninput={onInput}
-							disabled={!isActiveSlot || !displayedEntry}
-							class="h-14 w-full border-none bg-transparent pr-2 pl-0 font-mono text-3xl font-light
-                   text-stone-900 ring-0 outline-none placeholder:text-stone-300
-                   focus:border-transparent focus:ring-0 focus:outline-none"
-							autofocus
-							aria-label="Current hour note"
-						/>
-					</form>
-				{:else}
-					<div class="mt-4">
-						<DayDots {entries} {circleClassFor} {rangeLabel} />
-					</div>
-				{/if}
-			{:else}
+            {#if isQuietHours}
+                <div class="mt-8 text-center">
+                    <h2 class="text-2xl font-semibold text-stone-800">Goodnight.</h2>
+                    <p class="mt-2 font-mono text-sm text-stone-600">
+                        Come back in {countdown.hours} {countdown.hours === 1 ? 'hour' : 'hours'}
+                        and {countdown.minutes} {countdown.minutes === 1 ? 'minute' : 'minutes'}
+                    </p>
+      
+                    <div class="mt-6">
+                        <DayDots {entries} {circleClassFor} {rangeLabel} />
+                    </div>
+                </div>
+            {:else}
+                {#if isActiveSlot || !displayedEntry}
+                    <form onsubmit={onSubmit} class="flex flex-row">
+                        <input
+                            type="text"
+                            placeholder={placeholderStr}
+                            value={currentBody}
+                            oninput={onInput}
+                            disabled={!isActiveSlot || !displayedEntry}
+                            class="h-14 w-full border-none bg-transparent pr-2 pl-0 font-mono text-3xl font-light
+                                text-stone-900 ring-0 outline-none placeholder:text-stone-300
+                                focus:border-transparent focus:ring-0 focus:outline-none"
+                            autofocus
+                            aria-label="Current hour note"
+                        />
+                    </form>
+                {:else}
+                    <div class="mt-4">
+                        <DayDots {entries} {circleClassFor} {rangeLabel} />
+                    </div>
+                {/if}
+            {/if}
+			<!-- {:else}
 				<div class="mt-2 flex w-full items-center gap-2">
 					<button
 						type="button"
@@ -1117,7 +1132,7 @@
 						<span class="self-center text-lg">Bad</span>
 					</button>
 				</div>
-			{/if}
+			{/if} -->
 		</div>
 	{/if}
 </div>
