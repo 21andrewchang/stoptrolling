@@ -1,15 +1,20 @@
 <script lang="ts">
 	import ReviewModal from '$lib/components/ReviewModal.svelte';
+	import HistoryModal from '$lib/components/HistoryModal.svelte';
 	import DayDots from '$lib/components/DayDots.svelte';
 	import { onMount, onDestroy } from 'svelte';
 	import { fade, fly, scale } from 'svelte/transition';
 	import { dayLog, type HourEntry, endHourOf, defaultHours } from '$lib/stores/day-log';
+	import { historyStore, historyLoading, historyLoaded, historyError } from '$lib/stores/history';
+	import type { HistoryDay } from '$lib/stores/history';
 	import { ymd, slotRange, minutesUntil, rangeLabel as labelFor } from '$lib/utils/time';
 	import { supabase } from '$lib/supabase';
 	import { PUBLIC_X_CLIENT_ID, PUBLIC_X_REDIRECT_URI } from '$env/static/public';
 	import type { User } from '@supabase/supabase-js';
+	import { get } from 'svelte/store';
 
 	const date = ymd(new Date());
+	const HISTORY_SLOT_COUNT = 16;
 
 	let dayId = $state<string | null>(null);
 	let firstName = $state<string | null>(null);
@@ -21,9 +26,12 @@
 	let showAuthModal = $state(false);
 	let showHIWModal = $state(false);
 	let showAutoPostModal = $state(false);
+	let showHistory = $state(false);
 	let authLoading = $state(false);
 	let authError = $state('');
 	let xAuthorizeError = $state('');
+	let historyFetchPromise: Promise<void> | null = null;
+	let historyForUser: string | null = null;
 
 	function deriveFirstName(user: User): string | null {
 		const metadata = (user.user_metadata ?? {}) as Record<string, unknown>;
@@ -87,6 +95,7 @@
 
 		await syncServerSupabaseSession();
 		await checkAutoPostAuthorization(user_id);
+		void loadHistoryInBackground(user_id);
 
 		const { data, error } = await supabase
 			.from('days')
@@ -195,6 +204,21 @@
 			void checkAutoPostAuthorization(userId);
 		}
 	}
+	function openHistoryModal() {
+		if (!hasUser || !userId) {
+			openAuthModal();
+			return;
+		}
+
+		showHistory = true;
+
+		const loaded = get(historyLoaded);
+		const error = get(historyError);
+
+		if ((!loaded || error) && !historyFetchPromise) {
+			void loadHistoryInBackground(userId);
+		}
+	}
 	function openHIWModal() {
 		showHIWModal = true;
 	}
@@ -228,8 +252,15 @@
 		goal = '';
 		entries = [];
 		showAutoPostModal = false;
+		showHistory = false;
 		xAuthorizeLoading = false;
 		xAuthorizeError = '';
+		historyStore.set([]);
+		historyLoaded.set(false);
+		historyLoading.set(false);
+		historyError.set(null);
+		historyFetchPromise = null;
+		historyForUser = null;
 	}
 
 	async function signOutCurrentUser() {
@@ -551,6 +582,132 @@
 		}
 	}
 
+	type DayRow = {
+		id: string;
+		date: string | null;
+	};
+
+	type HourRow = {
+		day_id: string;
+		start_hour: number;
+		aligned: boolean | null;
+	};
+
+	async function loadHistoryInBackground(user_id: string): Promise<void> {
+		if (!user_id) return;
+		if (historyForUser === user_id && get(historyLoaded)) return;
+		if (historyFetchPromise) return;
+
+		const promise = (async () => {
+			historyLoading.set(true);
+			historyError.set(null);
+
+			try {
+				const { data: dayData, error: dayError } = await supabase
+					.from('days')
+					.select('id, date')
+					.eq('user_id', user_id)
+					.order('date', { ascending: false });
+
+				if (dayError) throw dayError;
+
+				const days = (dayData ?? []).filter((row): row is DayRow => {
+					return typeof row?.id === 'string';
+				});
+
+				if (!days.length) {
+					historyStore.set([]);
+					historyLoaded.set(true);
+					historyForUser = user_id;
+					return;
+				}
+
+				const dayIds = days.map((row) => row.id);
+
+				const { data: hourData, error: hourError } = await supabase
+					.from('day_hours')
+					.select('day_id, start_hour, aligned')
+					.in('day_id', dayIds)
+					.order('start_hour', { ascending: true });
+
+				if (hourError) throw hourError;
+
+				const hours = (hourData ?? []).filter((row): row is HourRow => {
+					const startHour =
+						typeof row?.start_hour === 'number'
+							? row.start_hour
+							: Number.parseInt(String(row?.start_hour ?? NaN), 10);
+					return (
+						typeof row?.day_id === 'string' &&
+						Number.isInteger(startHour) &&
+						startHour >= 0 &&
+						startHour <= 23
+					);
+				});
+
+				const hoursByDay = new Map<string, Map<number, boolean | null>>();
+				for (const row of hours) {
+					const startHour =
+						typeof row.start_hour === 'number'
+							? row.start_hour
+							: Number.parseInt(String(row.start_hour), 10);
+					if (Number.isNaN(startHour)) continue;
+					const dayHours = hoursByDay.get(row.day_id) ?? new Map<number, boolean | null>();
+					const alignment =
+						row.aligned === null || row.aligned === undefined ? null : row.aligned === true;
+					dayHours.set(startHour, alignment);
+					hoursByDay.set(row.day_id, dayHours);
+				}
+
+				const fallback = defaultHours();
+
+				const history = days.map<HistoryDay>((day) => {
+					const statusMap = hoursByDay.get(day.id) ?? new Map<number, boolean | null>();
+					const dots = fallback.map((slot) => {
+						if (!statusMap.has(slot.startHour)) return null;
+						const aligned = statusMap.get(slot.startHour);
+						return aligned === null ? null : !!aligned;
+					});
+
+					const first = dots.slice(0, HISTORY_SLOT_COUNT);
+					const goodCount = first.filter((d) => d === true).length;
+					const badCount = first.filter((d) => d === false).length;
+					const rawScore =
+						((goodCount + badCount) / HISTORY_SLOT_COUNT) * 100 + goodCount - badCount;
+					const score = Math.max(0, Math.min(100, Math.round(rawScore)));
+
+					const isoDate =
+						typeof day.date === 'string' && day.date
+							? day.date
+							: day.date
+								? ymd(new Date(day.date))
+								: '';
+
+					return {
+						id: day.id,
+						date: isoDate,
+						dots: first,
+						score
+					};
+				});
+
+				historyStore.set(history);
+				historyLoaded.set(true);
+				historyForUser = user_id;
+			} catch (err) {
+				console.error('Failed to load history', err);
+				historyError.set('Unable to load history. Please try again later.');
+				historyLoaded.set(false);
+			} finally {
+				historyLoading.set(false);
+				historyFetchPromise = null;
+			}
+		})();
+
+		historyFetchPromise = promise;
+		await promise;
+	}
+
 	async function authorizeAutoPost() {
 		if (!hasUser || xAuthorizeLoading) return;
 		if (!PUBLIC_X_CLIENT_ID || !PUBLIC_X_REDIRECT_URI) {
@@ -584,6 +741,7 @@
 				code_challenge_method: 'S256'
 			});
 
+			showAutoPostModal = false;
 			window.location.href = `${X_AUTHORIZE_ENDPOINT}?${params.toString()}`;
 		} catch (err) {
 			console.error('Failed to initiate X OAuth authorization', err);
@@ -735,7 +893,7 @@
 	const activePill = `${basePill} bg-stone-900 text-white border border-stone-900`;
 
 	const dots = $derived(entries.map((e) => (e.aligned === undefined ? null : !!e.aligned)));
-	const TOTAL = 16;
+	const TOTAL = HISTORY_SLOT_COUNT;
 	const goodCount = $derived(entries.slice(0, TOTAL).filter((e) => e.aligned === true).length);
 	const badCount = $derived(entries.slice(0, TOTAL).filter((e) => e.aligned === false).length);
 	const rawScore = $derived(((goodCount + badCount) / 16) * 100 + goodCount - badCount);
@@ -753,14 +911,19 @@
 
 {#if authResolved}
 	<header class="fixed top-4 left-6 z-10">
-		<div class="flex items-center gap-2 font-mono text-sm">
+		<button
+			type="button"
+			class="flex items-center gap-2 rounded-lg bg-transparent px-2 py-1 font-mono text-sm text-stone-600 transition hover:text-stone-800 focus:outline-none"
+			onclick={openHistoryModal}
+			aria-label="View history"
+		>
 			<span class="font-semibold text-stone-500">{date.slice(5)}</span>
 			<span
 				class="max-w-[50vw] truncate"
 				transition:fly|global={{ y: 4, delay: 400, duration: 200 }}
 				>{goal ? `I will ${goal}` : ''}</span
 			>
-		</div>
+		</button>
 	</header>
 
 	<header class="fixed top-4 right-6 z-10 flex flex-row items-center gap-6">
@@ -1126,3 +1289,4 @@
 		</div>
 	</div>
 {/if}
+<HistoryModal open={showHistory} onClose={() => (showHistory = false)} />
