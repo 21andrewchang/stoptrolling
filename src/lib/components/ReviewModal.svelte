@@ -159,12 +159,12 @@
 
 {#if open}
 	<div
-		class="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-stone-50/80 backdrop-blur-sm"
+		class="fixed inset-0 z-[9999] mb-20 flex flex-col items-center justify-center bg-stone-50/80 backdrop-blur-sm"
 		transition:blur={{ duration: 200 }}
 	>
 		<Toast open={toastOpen} message={msg} {tone} autoHide={3000} onClose={closeToast} />
 		<div aria-modal="true" class="mx-4 rounded-2xl">
-			<div bind:this={cardEl} class="relative flex h-full w-full flex-col justify-center p-6">
+			<div bind:this={cardEl} class="relative flex w-full flex-col justify-center p-4">
 				<div
 					class="flex flex-row justify-between"
 					transition:fly={{ y: 10, delay: 200, duration: 200 }}
@@ -222,11 +222,11 @@
 					{siteLabel}
 				</div>
 			</div>
-			<div class="flex w-full justify-between p-4">
+			<div class="mt-2 flex w-full justify-between pl-4">
 				<div class="flex flex-row gap-2">
 					<button
 						type="button"
-						class="flex items-center gap-2 rounded-md bg-stone-900 px-3 py-2 text-xs font-medium text-white transition hover:bg-stone-800 focus:ring-2 focus:ring-stone-400 focus:outline-none disabled:cursor-not-allowed disabled:opacity-70"
+						class="flex items-center gap-2 rounded-md bg-stone-900 px-2 text-xs font-medium text-white transition hover:bg-stone-800 focus:ring-2 focus:ring-stone-400 focus:outline-none disabled:cursor-not-allowed disabled:opacity-70"
 						onclick={postToX}
 						disabled={postLoading}
 						aria-label="Share this summary to X"
@@ -235,7 +235,7 @@
 						<svg
 							xmlns="http://www.w3.org/2000/svg"
 							viewBox="0 0 16 16"
-							class="h-4 w-4"
+							class="h-3 w-3"
 							fill="currentColor"
 							aria-hidden="true"
 						>
@@ -243,7 +243,7 @@
 								d="M12.6.75h2.454l-5.36 6.142L16 15.25h-4.937l-3.867-5.07-4.425 5.07H.316l5.733-6.57L0 .75h5.063l3.495 4.633L12.601.75Zm-.86 13.028h1.36L4.323 2.145H2.865z"
 							/>
 						</svg>
-						<span>{postLoading ? 'Posting…' : 'Post to X'}</span>
+						<span>{postLoading ? 'Posting…' : 'Post'}</span>
 					</button>
 					<button
 						type="button"

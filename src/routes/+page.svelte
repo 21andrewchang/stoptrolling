@@ -858,51 +858,64 @@
 	>
 		<div
 			in:scale={{ start: 0.96, duration: 180 }}
-			class="w-full max-w-xl rounded-3xl p-6 text-stone-800"
+			class="w-full max-w-lg rounded-3xl p-6 text-stone-800"
 			role="document"
 		>
 			<div class="space-y-3 text-stone-700">
-				<h3 class="text-xl font-semibold text-stone-900">How it works</h3>
+				<div class="flex flex-row items-center justify-between">
+					<h3 class="text-xl font-semibold text-stone-900">How it works</h3>
 
+					<div class="flex flex-wrap items-center justify-center gap-3">
+						<span class="inline-flex items-center gap-1">
+							<span class="inline-block h-3.5 w-3.5 rounded-full bg-emerald-400" aria-hidden="true"
+							></span>
+							<span class="text-xs">Good</span>
+						</span>
+						<span class="inline-flex items-center gap-1">
+							<span class="inline-block h-3.5 w-3.5 rounded-full bg-red-400" aria-hidden="true"
+							></span>
+							<span class="text-xs">Bad</span>
+						</span>
+						<span class="inline-flex items-center gap-1">
+							<span
+								class="inline-block h-3.5 w-3.5 rounded-full border border-stone-400"
+								aria-hidden="true"
+							></span>
+							<span class="text-xs">Empty</span>
+						</span>
+						<span class="inline-flex items-center gap-1">
+							<span
+								class="inline-block h-3.5 w-3.5 rounded-full border border-dashed border-stone-400 bg-transparent"
+								aria-hidden="true"
+							></span>
+							<span class="text-xs">Future</span>
+						</span>
+					</div>
+				</div>
 				<ul class="list-disc space-y-2 pl-5">
 					<li>
-						<span class="font-medium text-stone-900">Log each hour (8am–11pm)</span>
+						<span class="text-stone-900">Log each hour (8am–11pm)</span>
 					</li>
 					<li>
-						<span class="font-medium text-stone-900">AI rates what you're doing</span>
+						<span class="text-stone-900">AI rates what you're doing</span>
 					</li>
 					<li>
-						<span class="font-medium text-stone-900">End-of-day summary.</span>
+						<span class="text-stone-900">Summary at end of day</span>
 					</li>
 					<li>
-						<span class="font-medium text-stone-900">Autoposts to X for accountability</span>
+						<span class="text-stone-900">Autoposts summary image to Twitter for accountability</span
+						>
 					</li>
-					<li>If you don’t log anything, it'll say you didn't do shit today.</li>
+					<li>
+						<span class="text-stone-900">Posts "I didn't do shit today" if no logs</span>
+					</li>
 				</ul>
-
-				<div class="mt-1 flex flex-wrap items-center gap-4">
-					<span class="inline-flex items-center gap-2">
-						<span class="inline-block h-3.5 w-3.5 rounded-full bg-emerald-500" aria-hidden="true"
-						></span>
-						<span class="text-xs">Good</span>
-					</span>
-					<span class="inline-flex items-center gap-2">
-						<span class="inline-block h-3.5 w-3.5 rounded-full bg-rose-500" aria-hidden="true"
-						></span>
-						<span class="text-xs">Bad</span>
-					</span>
-					<span class="inline-flex items-center gap-2">
-						<span class="inline-block h-3.5 w-3.5 rounded-full bg-stone-300" aria-hidden="true"
-						></span>
-						<span class="text-xs">Didn’t log</span>
-					</span>
-				</div>
 			</div>
 			<button
 				type="button"
 				onclick={signInWithTwitter}
 				disabled={authLoading}
-				class="mt-5 flex w-full items-center justify-center gap-2 rounded-xl border border-stone-200 bg-white px-4 py-3 text-sm font-medium text-stone-800 transition hover:border-stone-300 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
+				class="mt-5 flex w-full items-center justify-center gap-2 rounded-xl border border-stone-200 bg-transparent px-4 py-3 text-sm font-medium text-stone-800 transition hover:border-stone-300 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
 			>
 				<svg
 					xmlns="http://www.w3.org/2000/svg"
@@ -915,7 +928,7 @@
 						d="M12.6.75h2.454l-5.36 6.142L16 15.25h-4.937l-3.867-5.07-4.425 5.07H.316l5.733-6.57L0 .75h5.063l3.495 4.633L12.601.75Zm-.86 13.028h1.36L4.323 2.145H2.865z"
 					/>
 				</svg>
-				<span>{authLoading ? 'Redirecting…' : 'Continue with X'}</span>
+				<span>{authLoading ? 'Redirecting…' : 'Continue with Twitter'}</span>
 			</button>
 		</div>
 	</div>
@@ -980,7 +993,7 @@
 						d="M12.6.75h2.454l-5.36 6.142L16 15.25h-4.937l-3.867-5.07-4.425 5.07H.316l5.733-6.57L0 .75h5.063l3.495 4.633L12.601.75Zm-.86 13.028h1.36L4.323 2.145H2.865z"
 					/>
 				</svg>
-				<span>{authLoading ? 'Redirecting…' : 'Continue with X'}</span>
+				<span>{authLoading ? 'Redirecting…' : 'Continue with Twitter'}</span>
 			</button>
 
 			{#if authError}
