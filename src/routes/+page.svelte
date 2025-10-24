@@ -536,9 +536,20 @@
 	}
 
 	function circleClassFor(entry: HourEntry): string {
-		const hasBody = !!entry.body && entry.body.trim().length > 0;
-		const base = hasBody ? 'bg-stone-400 border-stone-400' : 'bg-transparent border-stone-400';
-		return isFuture(entry) ? `${base} border-dashed` : base;
+		if (isFuture(entry)) {
+			return 'border-dashed border-stone-400 border bg-transparent';
+		}
+		if (entry.aligned === true) return 'bg-emerald-400';
+		if (entry.aligned === false) return 'bg-red-400';
+
+		// Not rated yet:
+		const hasBody = !!entry.body?.trim();
+
+		// Logged but not rated -> neutral ring
+		if (hasBody) return 'bg-stone-400';
+
+		// Not logged -> soft gray fill
+		return 'bg-transparent border border-stone-400';
 	}
 
 	function rangeLabel(entry: HourEntry): string {
@@ -847,30 +858,46 @@
 	>
 		<div
 			in:scale={{ start: 0.96, duration: 180 }}
-			class="w-full max-w-sm rounded-3xl p-6 text-stone-800"
+			class="w-full max-w-xl rounded-3xl p-6 text-stone-800"
 			role="document"
 		>
-			<div class="flex items-center justify-between">
-				<div class="text-sm font-semibold tracking-tight text-stone-900">Sign in</div>
-				<button
-					type="button"
-					class="rounded-full p-1 text-stone-500 hover:text-stone-800"
-					onclick={closeHIWModal}
-					aria-label="Close sign in"
-					{...{ disabled: authLoading } as any}
-				>
-					<svg
-						viewBox="0 0 24 24"
-						class="h-4 w-4"
-						fill="none"
-						stroke="currentColor"
-						stroke-width="2"
-					>
-						<path d="M6 6l12 12M6 18L18 6" stroke-linecap="round" />
-					</svg>
-				</button>
-			</div>
+			<div class="space-y-3 text-stone-700">
+				<h3 class="text-xl font-semibold text-stone-900">How it works</h3>
 
+				<ul class="list-disc space-y-2 pl-5">
+					<li>
+						<span class="font-medium text-stone-900">Log each hour (8am–11pm)</span>
+					</li>
+					<li>
+						<span class="font-medium text-stone-900">AI rates what you're doing</span>
+					</li>
+					<li>
+						<span class="font-medium text-stone-900">End-of-day summary.</span>
+					</li>
+					<li>
+						<span class="font-medium text-stone-900">Autoposts to X for accountability</span>
+					</li>
+					<li>If you don’t log anything, it'll say you didn't do shit today.</li>
+				</ul>
+
+				<div class="mt-1 flex flex-wrap items-center gap-4">
+					<span class="inline-flex items-center gap-2">
+						<span class="inline-block h-3.5 w-3.5 rounded-full bg-emerald-500" aria-hidden="true"
+						></span>
+						<span class="text-xs">Good</span>
+					</span>
+					<span class="inline-flex items-center gap-2">
+						<span class="inline-block h-3.5 w-3.5 rounded-full bg-rose-500" aria-hidden="true"
+						></span>
+						<span class="text-xs">Bad</span>
+					</span>
+					<span class="inline-flex items-center gap-2">
+						<span class="inline-block h-3.5 w-3.5 rounded-full bg-stone-300" aria-hidden="true"
+						></span>
+						<span class="text-xs">Didn’t log</span>
+					</span>
+				</div>
+			</div>
 			<button
 				type="button"
 				onclick={signInWithTwitter}

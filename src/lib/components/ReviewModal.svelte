@@ -185,10 +185,13 @@
 						{#each dots as d, i}
 							<div class="relative flex flex-col items-center pb-3" style="width:1.25rem">
 								<span
-									class="inline-block h-5 w-5 rounded-full"
-									class:bg-rose-500={d === false}
-									class:bg-emerald-500={d === true}
-									class:bg-stone-300={d === null}
+									class={`inline-block h-5 w-5 rounded-full ${
+										d === true
+											? 'bg-emerald-400'
+											: d === false
+												? 'bg-red-400'
+												: 'border border-stone-400 bg-transparent'
+									}`}
 									aria-label={`dot ${i + 1}`}
 								/>
 								{#if i === 0}
