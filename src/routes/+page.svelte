@@ -760,6 +760,7 @@
 		}
 
 		if (dayId) {
+			console.log('rating');
 			void backgroundRateAndPersist(dayId, entryDayKey, startHour, trimmed, goal);
 		}
 
@@ -827,27 +828,21 @@
 				: 'Loading account information'}
 		>
 			<span class="font-mono text-sm tracking-tighter text-stone-500">
-				{#if firstName}
-					{firstName}
-				{:else if userEmail}
-					{userEmail}
-				{:else}
-					<svg
-						width="20"
-						height="20"
-						viewBox="0 0 24 24"
-						fill="currentColor"
-						stroke="currentColor"
-						stroke-width="2"
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						shape-rendering="geometricPrecision"
-						class="h-4 w-4 transition-colors duration-200"
-					>
-						<path d="M20 21.5v-2.5a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2.5h16" />
-						<circle cx="12" cy="7" r="4" />
-					</svg>
-				{/if}
+				<svg
+					width="20"
+					height="20"
+					viewBox="0 0 24 24"
+					fill={firstName ? 'currentColor' : 'transparent'}
+					stroke="currentColor"
+					stroke-width="2"
+					stroke-linecap="round"
+					stroke-linejoin="round"
+					shape-rendering="geometricPrecision"
+					class="h-4 w-4 transition-colors duration-200"
+				>
+					<path d="M20 21.5v-2.5a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2.5h16" />
+					<circle cx="12" cy="7" r="4" />
+				</svg>
 			</span>
 		</button>
 	</header>
