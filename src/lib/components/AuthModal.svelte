@@ -1,7 +1,13 @@
 <script lang="ts">
 	import { fade, scale } from 'svelte/transition';
 
-	const { open = false, loading = false, error = '', onSignIn = null, onClose = null } = $props<{
+	const {
+		open = false,
+		loading = false,
+		error = '',
+		onSignIn = null,
+		onClose = null
+	} = $props<{
 		open?: boolean;
 		loading?: boolean;
 		error?: string;
@@ -73,12 +79,12 @@
 				type="button"
 				onclick={handleSignInClick}
 				disabled={loading}
-				class="mt-5 flex w-full items-center justify-center gap-2 rounded-xl border border-stone-200 bg-white px-4 py-3 text-sm font-medium text-stone-800 transition hover:border-stone-300 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
+				class="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-stone-900 px-4 py-3 text-sm font-medium text-stone-100 disabled:cursor-not-allowed disabled:opacity-60"
 			>
 				<svg
 					xmlns="http://www.w3.org/2000/svg"
 					viewBox="0 0 16 16"
-					class="h-5 w-5"
+					class="h-4 w-4"
 					fill="currentColor"
 					aria-hidden="true"
 				>

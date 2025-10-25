@@ -84,7 +84,7 @@
 				type="button"
 				onclick={handleAuthorizeClick}
 				disabled={loading}
-				class="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-stone-900 px-4 py-3 text-sm font-medium text-stone-100 transition hover:border-stone-300 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
+				class="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-stone-900 px-4 py-3 text-sm font-medium text-stone-100 disabled:cursor-not-allowed disabled:opacity-60"
 			>
 				<svg
 					xmlns="http://www.w3.org/2000/svg"
