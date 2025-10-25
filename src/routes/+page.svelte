@@ -1,9 +1,13 @@
 <script lang="ts">
+	import InputState from '$lib/components/InputState.svelte';
+	import DisplayState from '$lib/components/DisplayState.svelte';
 	import ReviewModal from '$lib/components/ReviewModal.svelte';
 	import HistoryModal from '$lib/components/HistoryModal.svelte';
-	import DayDots from '$lib/components/DayDots.svelte';
+	import AutoPostModal from '$lib/components/AutoPostModal.svelte';
+	import AuthModal from '$lib/components/AuthModal.svelte';
+	import HowItWorksModal from '$lib/components/HowItWorksModal.svelte';
 	import { onMount, onDestroy } from 'svelte';
-	import { fade, fly, scale } from 'svelte/transition';
+	import { fly } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
 	import { dayLog, type HourEntry, endHourOf, defaultHours } from '$lib/stores/day-log';
 	import { historyStore, historyLoading, historyLoaded, historyError } from '$lib/stores/history';
@@ -13,10 +17,20 @@
 	import { PUBLIC_X_CLIENT_ID, PUBLIC_X_REDIRECT_URI } from '$env/static/public';
 	import type { User } from '@supabase/supabase-js';
 	import { get } from 'svelte/store';
+	import { makeDayService } from '$lib/services/day';
+	import { makeRatingService } from '$lib/services/rating';
+	import { makeSessionService } from '$lib/services/session';
+	import { buildRandomString, createPkceChallenge, persistPkceState } from '$lib/xoauth/client';
+	import type { PageData } from './$types';
 
 	const date = ymd(new Date());
 	const HISTORY_SLOT_COUNT = 16;
 
+	const daySvc = makeDayService(supabase);
+	const ratingSvc = makeRatingService(supabase, fetch);
+	const sessionSvc = makeSessionService(supabase, fetch);
+
+	const { data } = $props<{ data: PageData }>();
 	let dayId = $state<string | null>(null);
 	let firstName = $state<string | null>(null);
 	let userEmail = $state<string | null>(null);
@@ -33,6 +47,22 @@
 	let xAuthorizeError = $state('');
 	let historyFetchPromise: Promise<void> | null = null;
 	let historyForUser: string | null = null;
+
+	const initialGoal = data?.day?.goal ?? '';
+	const initialHours = data?.day?.hours ?? defaultHours();
+
+	if (data?.user) {
+		hasUser = true;
+		userId = data.user.id;
+		userEmail = typeof data.user.email === 'string' ? data.user.email : null;
+		authResolved = true;
+	}
+
+	if (data?.day) {
+		dayId = data.day.id;
+		dayLog.replaceHours(date, initialHours);
+		dayLog.setGoal(date, initialGoal);
+	}
 
 	function deriveFirstName(user: User): string | null {
 		const metadata = (user.user_metadata ?? {}) as Record<string, unknown>;
@@ -53,150 +83,68 @@
 		return null;
 	}
 
-	async function ensureDayId(): Promise<string | null> {
-		let userRes: Awaited<ReturnType<typeof supabase.auth.getUser>>['data'] | undefined;
-		let authErr: Awaited<ReturnType<typeof supabase.auth.getUser>>['error'] | null | undefined;
+	async function ensureTodayRecord(): Promise<{ id: string; goal: string } | null> {
 		try {
-			const result = await supabase.auth.getUser();
-			userRes = result.data;
-			console.log('user: ', userRes);
-			authErr = result.error;
-		} catch (err) {
-			console.error('Supabase getUser exception:', err);
-			firstName = null;
-			userEmail = null;
-			hasUser = false;
-			authResolved = true;
-			return null;
-		}
-		if (authErr) {
-			console.error('auth error', authErr);
-			firstName = null;
-			userEmail = null;
-			hasUser = false;
-			authResolved = true;
-			return null;
-		}
-		const user = userRes?.user ?? null;
-		const user_id = user?.id;
-		if (!user_id || !user) {
-			firstName = null;
-			userEmail = null;
-			hasUser = false;
-			authResolved = true;
-			return null;
-		}
-
-		firstName = deriveFirstName(user);
-		userEmail = typeof user.email === 'string' ? user.email : null;
-		hasUser = true;
-		userId = user_id;
-		authResolved = true;
-		console.log('authresolved: ', authResolved);
-
-		await syncServerSupabaseSession();
-		await upsertTimezoneIfNeeded(user_id);
-		await checkAutoPostAuthorization(user_id);
-		void loadHistoryInBackground(user_id);
-
-		const { data, error } = await supabase
-			.from('days')
-			.upsert({ user_id, date }, { onConflict: 'user_id,date' })
-			.select('id')
-			.single();
-
-		if (error) {
-			console.error('ensureDayId upsert failed:', error);
-			return null;
-		}
-		return data.id;
-	}
-
-	type DbHourRow = {
-		start_hour: number;
-		body: string | null;
-		aligned: boolean | null;
-	};
-
-	async function loadDayFromDatabase(
-		id: string
-	): Promise<{ goal: string; hours: HourEntry[] } | null> {
-		try {
-			const [dayRes, hoursRes] = await Promise.all([
-				supabase.from('days').select('goal').eq('id', id).maybeSingle(),
-				supabase
-					.from('day_hours')
-					.select('start_hour, body, aligned')
-					.eq('day_id', id)
-					.order('start_hour', { ascending: true })
-			]);
-
-			if (dayRes.error) {
-				console.error('Supabase day load failed:', dayRes.error);
-				return null;
-			}
-			if (hoursRes.error) {
-				console.error('Supabase day_hours load failed:', hoursRes.error);
+			const { user, error } = await sessionSvc.getAuthedUser();
+			if (error || !user) {
+				if (error) console.error('Supabase getUser error:', error);
+				firstName = null;
+				userEmail = null;
+				hasUser = false;
+				userId = null;
+				authResolved = true;
 				return null;
 			}
 
-			const goalFromDb = (dayRes.data?.goal ?? '') as string;
-			const rows = (hoursRes.data ?? []) as DbHourRow[];
-			const rowMap = new Map<number, DbHourRow>();
-			for (const row of rows) {
-				const startHour =
-					typeof row.start_hour === 'number' ? row.start_hour : Number(row.start_hour);
-				if (Number.isNaN(startHour)) continue;
-				rowMap.set(startHour, row);
-			}
+			firstName = deriveFirstName(user);
+			userEmail = typeof user.email === 'string' ? user.email : null;
+			hasUser = true;
+			userId = user.id;
+			authResolved = true;
 
-			const fallback = defaultHours();
-			const hours = fallback.map((slot) => {
-				const remote = rowMap.get(slot.startHour);
-				if (!remote) {
-					return { ...slot };
-				}
+			await sessionSvc.syncServerSession();
+			await upsertTimezoneIfNeeded(user.id);
+			await checkAutoPostAuthorization(user.id);
+			void loadHistoryInBackground(user.id);
 
-				const entry: HourEntry = {
-					startHour: slot.startHour,
-					body: remote.body ?? ''
-				};
-
-				if (remote.aligned !== null && remote.aligned !== undefined) {
-					entry.aligned = remote.aligned;
-				}
-
-				return entry;
-			});
-
-			return { goal: goalFromDb, hours };
+			const today = await daySvc.ensureToday(user.id);
+			dayId = today.id;
+			return { id: today.id, goal: today.goal };
 		} catch (err) {
-			console.error('Failed to load day from Supabase:', err);
+			console.error('ensureTodayRecord failed:', err);
+			firstName = null;
+			userEmail = null;
+			hasUser = false;
+			userId = null;
+			authResolved = true;
 			return null;
 		}
 	}
 
 	async function syncFromDatabase(): Promise<void> {
-		const id = await ensureDayId();
-		dayId = id;
-		if (!id) return;
+		const today = await ensureTodayRecord();
+		if (!today) return;
 
-		const remote = await loadDayFromDatabase(id);
-		if (!remote) return;
+		try {
+			const hours = await daySvc.loadDayHours(today.id);
+			dayLog.replaceHours(date, hours);
+			dayLog.setGoal(date, today.goal);
+		} catch (err) {
+			console.error('Failed to load day data:', err);
+		}
+	}
 
-		console.log('Loaded day from database', { date, ...remote });
-		dayLog.replaceHours(date, remote.hours);
-		dayLog.setGoal(date, remote.goal);
+	async function ensureDayId(): Promise<string | null> {
+		const today = await ensureTodayRecord();
+		return today?.id ?? null;
 	}
 
 	async function upsertTimezoneIfNeeded(user_id: string): Promise<void> {
 		try {
-			// browser-only; if somehow called server-side, just bail
 			if (typeof Intl === 'undefined' || typeof window === 'undefined') return;
 
 			const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 
-			// read current value to avoid useless writes
 			const { data: existing, error: readErr } = await supabase
 				.from('users')
 				.select('timezone')
@@ -205,10 +153,7 @@
 
 			if (readErr) {
 				console.warn('profiles read failed (timezone check):', readErr);
-				// fall through to attempt upsert anyway
 			}
-
-			// only write if missing/different
 			if (!existing || existing.timezone !== tz) {
 				const { error: upsertErr } = await supabase.from('users').upsert(
 					{ user_id: user_id, timezone: tz }, // include PK so insert works
@@ -221,23 +166,17 @@
 			console.error('profiles upsert (timezone) exception:', err);
 		}
 	}
+	let hydrated = $state(false);
 
 	onMount(async () => {
 		dayLog.ensure(date);
 		await syncFromDatabase();
+		hydrated = true;
 	});
 
 	function openAuthModal() {
 		authError = '';
 		showAuthModal = true;
-	}
-	function openAutoPostModal() {
-		if (!hasUser) return;
-		xAuthorizeError = '';
-		showAutoPostModal = true;
-		if (userId) {
-			void checkAutoPostAuthorization(userId);
-		}
 	}
 	function openHistoryModal() {
 		if (!hasUser || !userId) {
@@ -279,7 +218,6 @@
 		userId = null;
 		hasXAuthorization = false;
 		showReview = false;
-		editingIndex = null;
 		pendingIndex = null;
 		pendingBody = null;
 		currentBody = '';
@@ -349,11 +287,10 @@
 	}
 
 	let showReview = $state(false);
-
-	let goal = $state('');
-	let goalDraft = $state('');
+	let goal = $state(initialGoal);
+	let goalDraft = $state(initialGoal);
 	let goalSaving = $state(false);
-	let entries = $state<HourEntry[]>([]);
+	let entries = $state<HourEntry[]>(initialHours);
 	let now = $state(new Date());
 	let xAuthorizeLoading = $state(false);
 
@@ -404,91 +341,86 @@
 	});
 	onDestroy(() => {
 		if (timer) clearInterval(timer);
+		ratingClearTimers.forEach((timeout) => clearTimeout(timeout));
+		ratingClearTimers.clear();
 	});
+
+	const SLOT_COUNT = 16;
 
 	const currentIndex = $derived(
 		(() => {
 			if (!entries.length) return null as number | null;
 			const today = ymd(now);
 			if (date !== today) return null;
-			const START = entries[0].startHour;
-			const SLOTS = entries.length;
-			const h = now.getHours();
-			return h >= START && h < START + SLOTS ? h - START : null;
+			const startHour = entries[0].startHour;
+			const hour = now.getHours();
+			const idx = hour - startHour;
+			return idx >= 0 && idx < SLOT_COUNT ? idx : null;
 		})()
 	);
-	let editingIndex = $state<number | null>(null);
 
-	$effect(() => {
-		if (entries.length === 0) {
-			editingIndex = null;
-			return;
-		}
-
-		const today = ymd(now);
-		if (date === today) {
-			const START = entries[0].startHour;
-			const h = now.getHours();
-			if (h < START) {
-				editingIndex = 0;
-				return;
-			}
-		}
-
-		if (currentIndex === null) {
-			editingIndex = null;
-			return;
-		}
-
-		const cur = entries[currentIndex];
-		const hasBody = !!cur?.body?.trim();
-
-		if (!hasBody && editingIndex !== currentIndex) {
-			editingIndex = currentIndex;
-		}
-	});
-
-	const displayedEntry = $derived<HourEntry | undefined>(
-		(() => (editingIndex !== null ? entries[editingIndex] : undefined))()
+	const currentEntry = $derived<HourEntry | undefined>(
+		(() => (currentIndex !== null ? entries[currentIndex] : undefined))()
 	);
 
-	const isActiveSlot = $derived((() => editingIndex !== null && editingIndex === currentIndex)());
-	const placeholderStr = $derived(
+	const hasCurrentLog = $derived(
 		(() => {
-			const e = displayedEntry;
-			if (!e) return '';
-			if (isActiveSlot) return 'What are you doing right now?';
+			if (!currentEntry) return false;
+			return !!currentEntry.body?.trim();
+		})()
+	);
 
-			const { start, end } = slotRange(date, e.startHour, endHourOf);
+	const showInput = $derived((() => !isQuietHours && !!currentEntry && !hasCurrentLog)());
+
+	const inputPlaceholder = 'What are you doing right now?';
+
+	const slotLabel = $derived(
+		(() => {
+			const entry = currentEntry;
+			if (!entry || !showInput) return '';
+			return rangeLabel(entry);
+		})()
+	);
+
+	const statusText = $derived(
+		(() => {
+			if (isQuietHours) {
+				const parts: string[] = [];
+				if (countdown.hours > 0) {
+					parts.push(`${countdown.hours} hour${countdown.hours === 1 ? '' : 's'}`);
+				}
+				if (countdown.minutes > 0) {
+					parts.push(`${countdown.minutes} minute${countdown.minutes === 1 ? '' : 's'}`);
+				}
+				const suffix = parts.length ? `Come back in ${parts.join(' and ')}.` : 'Come back soon.';
+				return `Goodnight. ${suffix}`;
+			}
+
+			const entry = currentEntry;
+			if (!entry) return '';
+
+			const { start, end } = slotRange(date, entry.startHour, endHourOf);
 			const tNow = now.getTime();
 			const today = ymd(now);
 
-			if (date > today) {
-				const mins = minutesUntil(start, now);
-				return mins === 0
-					? 'Almost time…'
-					: `Come back in ${mins} minute${mins === 1 ? '' : 's'}...`;
-			}
+			const minsUntilStart = minutesUntil(start, now);
+			const minsUntilEnd = minutesUntil(end, now);
+			const labelForMins = (mins: number) =>
+				mins <= 0 ? 'Almost time…' : `Come back in ${mins} minute${mins === 1 ? '' : 's'}...`;
+
+			if (date > today) return labelForMins(minsUntilStart);
 			if (date < today) return 'This hour has passed';
 
-			if (tNow < start.getTime()) {
-				const mins = minutesUntil(start, now);
-				return mins === 0
-					? 'Almost time…'
-					: `Come back in ${mins} minute${mins === 1 ? '' : 's'}...`;
-			}
+			if (tNow < start.getTime()) return labelForMins(minsUntilStart);
 			if (tNow >= end.getTime()) return 'This hour has passed';
 
-			return 'What are you doing right now?';
+			return labelForMins(minsUntilEnd);
 		})()
-	);
-	const leadingText = $derived(
-		displayedEntry ? (isActiveSlot ? rangeLabel(displayedEntry) : placeholderStr) : ''
 	);
 
 	let currentBody = $state('');
 	$effect(() => {
-		currentBody = displayedEntry ? (displayedEntry.body ?? '') : '';
+		currentBody = currentEntry ? (currentEntry.body ?? '') : '';
 	});
 
 	function isFuture(entry: HourEntry): boolean {
@@ -507,102 +439,6 @@
 		'offline.access',
 		'media.write'
 	];
-	const PKCE_CHARSET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
-
-	function base64UrlEncode(buffer: ArrayBuffer): string {
-		if (typeof btoa !== 'function') {
-			throw new Error('Base64 encoding is unavailable in this environment');
-		}
-		const bytes = new Uint8Array(buffer);
-		let binary = '';
-		bytes.forEach((b) => (binary += String.fromCharCode(b)));
-		return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-	}
-
-	function buildRandomString(length: number, alphabet: string): string {
-		if (typeof window === 'undefined' || !window.crypto?.getRandomValues) {
-			throw new Error('Secure randomness unavailable in this environment');
-		}
-		const randomValues = new Uint8Array(length);
-		window.crypto.getRandomValues(randomValues);
-		const chars = alphabet.length;
-		let out = '';
-		for (let i = 0; i < length; i++) {
-			out += alphabet[randomValues[i] % chars];
-		}
-		return out;
-	}
-
-	function createPkceVerifier(): string {
-		return buildRandomString(64, PKCE_CHARSET);
-	}
-
-	async function createPkceChallenge(verifier: string): Promise<string> {
-		if (!window.crypto?.subtle) {
-			throw new Error('PKCE challenge generation requires Web Crypto support');
-		}
-		const data = new TextEncoder().encode(verifier);
-		const digest = await window.crypto.subtle.digest('SHA-256', data);
-		return base64UrlEncode(digest);
-	}
-
-	function persistPkceState(verifier: string, stateValue: string): void {
-		try {
-			if (typeof localStorage !== 'undefined') {
-				localStorage.setItem('stoptrolling:x:code_verifier', verifier);
-				localStorage.setItem('stoptrolling:x:oauth_state', stateValue);
-			}
-
-			const maxAge = 600; // 10 minutes
-			const secure = location.protocol === 'https:' ? '; Secure' : '';
-			document.cookie = `x_pkce_verifier=${encodeURIComponent(verifier)}; Path=/; Max-Age=${maxAge}; SameSite=Lax${secure}`;
-			document.cookie = `x_oauth_state=${encodeURIComponent(stateValue)}; Path=/; Max-Age=${maxAge}; SameSite=Lax${secure}`;
-		} catch (err) {
-			console.warn('Failed to persist X OAuth state', err);
-		}
-	}
-
-	async function syncServerSupabaseSession(): Promise<boolean> {
-		try {
-			const {
-				data: { session },
-				error
-			} = await supabase.auth.getSession();
-			console.log(session);
-
-			if (error || !session) {
-				console.error('Failed to fetch Supabase session for server sync', error);
-				return false;
-			}
-
-			const { access_token: accessToken, refresh_token: refreshToken } = session;
-
-			if (typeof accessToken !== 'string' || typeof refreshToken !== 'string') {
-				console.error('Supabase session missing tokens for server sync');
-				return false;
-			}
-
-			const res = await fetch('/api/auth/session', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					access_token: accessToken,
-					refresh_token: refreshToken
-				}),
-				credentials: 'same-origin'
-			});
-
-			if (!res.ok) {
-				console.error('Server Supabase session sync failed', await res.text());
-				return false;
-			}
-
-			return true;
-		} catch (err) {
-			console.error('Unexpected error syncing Supabase session to server', err);
-			return false;
-		}
-	}
 
 	async function checkAutoPostAuthorization(user_id: string): Promise<boolean> {
 		try {
@@ -773,17 +609,21 @@
 		try {
 			xAuthorizeLoading = true;
 			xAuthorizeError = '';
-			const serverSessionSynced = await syncServerSupabaseSession();
+			const serverSessionSynced = await sessionSvc.syncServerSession();
 			if (!serverSessionSynced) {
 				xAuthorizeLoading = false;
 				xAuthorizeError = 'We could not confirm your Supabase session. Please sign in again.';
 				return;
 			}
 
-			const verifier = createPkceVerifier();
+			const verifier = buildRandomString(64);
 			const challenge = await createPkceChallenge(verifier);
-			const stateValue = buildRandomString(32, PKCE_CHARSET);
-			persistPkceState(verifier, stateValue);
+			const stateValue = buildRandomString(32);
+			try {
+				persistPkceState(verifier, stateValue);
+			} catch (err) {
+				console.warn('Failed to persist X OAuth state', err);
+			}
 
 			const params = new URLSearchParams({
 				response_type: 'code',
@@ -806,20 +646,24 @@
 	}
 
 	function circleClassFor(entry: HourEntry): string {
-		if (isFuture(entry)) {
-			return 'border-dashed border-stone-400 border bg-transparent';
+		const classes: string[] = [];
+		const ratingState = ratingStates[entry.startHour];
+
+		if (ratingState === 'rating') {
+			classes.push('is-rating', 'bg-stone-400'); // force neutral while loading
+			return classes.join(' ');
 		}
-		if (entry.aligned === true) return 'bg-emerald-400';
-		if (entry.aligned === false) return 'bg-red-400';
 
-		// Not rated yet:
-		const hasBody = !!entry.body?.trim();
+		if (ratingState === 'finishing') classes.push('is-finishing');
 
-		// Logged but not rated -> neutral ring
-		if (hasBody) return 'bg-stone-400';
+		// Final/static state color (this will blend during 'finishing')
+		if (isFuture(entry)) classes.push('border-dashed border-stone-400 border bg-transparent');
+		else if (entry.aligned === true) classes.push('bg-emerald-400');
+		else if (entry.aligned === false) classes.push('bg-red-400');
+		else if (entry.body?.trim()) classes.push('bg-stone-400');
+		else classes.push('bg-transparent border border-stone-400');
 
-		// Not logged -> soft gray fill
-		return 'bg-transparent border border-stone-400';
+		return classes.join(' ');
 	}
 
 	function rangeLabel(entry: HourEntry): string {
@@ -830,29 +674,46 @@
 		currentBody = (e.currentTarget as HTMLInputElement).value;
 	}
 
-	let isRating = $state(false);
-	let lastVerdict: { ok: boolean; reason: string } | null = null;
+	const RATING_FINISH_DURATION = 700;
+	let ratingStates = $state<Record<number, 'rating' | 'finishing'>>({});
+	const ratingClearTimers = new Map<number, ReturnType<typeof setTimeout>>();
 
-	async function rateLog(
-		log: string,
-		goalText: string | null
-	): Promise<{ ok: boolean; reason: string }> {
-		try {
-			const res = await fetch('/api/openai/rate-log', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ log, goal: goalText ?? '' })
-			});
-			if (!res.ok) throw new Error('Failed to rate log');
-			const data = await res.json();
-			const ok = !!data?.ok;
-			const reason = typeof data?.reason === 'string' ? data.reason : '';
-			return { ok, reason };
-		} catch (err) {
-			console.error('Failed to rate log:', err);
-			return { ok: true, reason: `Fallback (error: ${err})` };
+	function cancelRatingTimeout(startHour: number) {
+		const existing = ratingClearTimers.get(startHour);
+		if (existing) {
+			clearTimeout(existing);
+			ratingClearTimers.delete(startHour);
 		}
 	}
+
+	function startRatingAnimation(startHour: number) {
+		cancelRatingTimeout(startHour);
+		ratingStates = { ...ratingStates, [startHour]: 'rating' };
+	}
+
+	function finishRatingAnimation(startHour: number) {
+		cancelRatingTimeout(startHour);
+		ratingStates = { ...ratingStates, [startHour]: 'finishing' };
+
+		const timeout = setTimeout(() => {
+			ratingClearTimers.delete(startHour);
+			const next = { ...ratingStates };
+			delete next[startHour];
+			ratingStates = next;
+		}, RATING_FINISH_DURATION);
+
+		ratingClearTimers.set(startHour, timeout);
+	}
+
+	function resetRatingAnimation(startHour: number) {
+		cancelRatingTimeout(startHour);
+		const next = { ...ratingStates };
+		delete next[startHour];
+		ratingStates = next;
+	}
+
+	let pendingIndex = $state<number | null>(null);
+	let pendingBody = $state<string | null>(null);
 
 	async function backgroundRateAndPersist(
 		dayId: string,
@@ -861,23 +722,10 @@
 		body: string,
 		goalText: string | null
 	): Promise<void> {
-		try {
-			const res = await fetch('/api/openai/rate-log', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ log: body, goal: goalText ?? '' })
-			});
-			if (!res.ok) throw new Error(await res.text());
-			const data = await res.json();
-			const aligned: boolean = !!data?.ok;
+		startRatingAnimation(startHour);
 
-			const { error } = await supabase
-				.from('day_hours')
-				.upsert(
-					{ day_id: dayId, start_hour: startHour, body, aligned },
-					{ onConflict: 'day_id,start_hour' }
-				);
-			if (error) throw error;
+		try {
+			const aligned = await ratingSvc.rateAndPersist(dayId, startHour, body, goalText ?? '');
 
 			const recIdx = entries.findIndex((e) => e.startHour === startHour);
 			if (recIdx !== -1) dayLog.patchHour(dayKey, recIdx, { aligned });
@@ -886,12 +734,13 @@
 				pendingIndex = null;
 				pendingBody = null;
 			}
+
+			finishRatingAnimation(startHour);
 		} catch (err) {
 			console.error('backgroundRateAndPersist failed:', err);
+			resetRatingAnimation(startHour);
 		}
 	}
-	let pendingIndex = $state<number | null>(null);
-	let pendingBody = $state<string | null>(null);
 
 	async function submitGoal(e: SubmitEvent) {
 		e.preventDefault();
@@ -906,8 +755,7 @@
 			if (!dayId) {
 				console.warn('No dayId available; storing goal locally only.');
 			} else {
-				const { error } = await supabase.from('days').update({ goal: trimmed }).eq('id', dayId);
-				if (error) throw error;
+				await daySvc.upsertGoal(dayId, trimmed);
 				synced = true;
 			}
 		} catch (err) {
@@ -925,9 +773,9 @@
 
 	async function onSubmit(e: SubmitEvent) {
 		e.preventDefault();
-		if (!isActiveSlot || editingIndex === null) return;
+		if (!showInput || currentIndex === null) return;
 
-		const idx = editingIndex;
+		const idx = currentIndex;
 		const entry = entries[idx];
 		if (!entry) return;
 
@@ -944,18 +792,7 @@
 			if (!dayId) {
 				console.warn('No dayId available; storing note locally only.');
 			} else {
-				const { error } = await supabase.from('day_hours').upsert(
-					{
-						day_id: dayId,
-						start_hour: startHour,
-						body: trimmed
-					},
-					{ onConflict: 'day_id,start_hour' }
-				);
-
-				if (error) {
-					throw error;
-				}
+				await daySvc.upsertHour(dayId, startHour, trimmed);
 				synced = true;
 			}
 		} catch (err) {
@@ -973,19 +810,13 @@
 		}
 
 		if (dayId) {
+			console.log('rating');
 			void backgroundRateAndPersist(dayId, entryDayKey, startHour, trimmed, goal);
 		}
 
-		const isLast = editingIndex === entries.length - 1;
-		editingIndex = isLast ? editingIndex : Math.min(idx + 1, entries.length - 1);
-		currentBody = '';
+		const isLast = currentIndex === entries.length - 1;
 		if (isLast) showReview = true;
 	}
-
-	const basePill =
-		'inline-flex items-center gap-1 rounded-md px-3 py-1 font-mono text-xs transition-colors focus-visible:outline-none';
-	// const neutralPill = `${basePill} border border-stone-300 text-stone-700 hover:bg-stone-100`;
-	// const activePill = `${basePill} bg-stone-900 text-white border border-stone-900`;
 
 	const dots = $derived(entries.map((e) => (e.aligned === undefined ? null : !!e.aligned)));
 	const TOTAL = HISTORY_SLOT_COUNT;
@@ -1047,341 +878,72 @@
 				: 'Loading account information'}
 		>
 			<span class="font-mono text-sm tracking-tighter text-stone-500">
-				{#if firstName}
-					{firstName}
-				{:else if userEmail}
-					{userEmail}
-				{:else}
-					<svg
-						width="20"
-						height="20"
-						viewBox="0 0 24 24"
-						fill="currentColor"
-						stroke="currentColor"
-						stroke-width="2"
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						shape-rendering="geometricPrecision"
-						class="h-4 w-4 transition-colors duration-200"
-					>
-						<path d="M20 21.5v-2.5a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2.5h16" />
-						<circle cx="12" cy="7" r="4" />
-					</svg>
-				{/if}
+				<svg
+					width="20"
+					height="20"
+					viewBox="0 0 24 24"
+					fill={firstName ? 'currentColor' : 'transparent'}
+					stroke="currentColor"
+					stroke-width="2"
+					stroke-linecap="round"
+					stroke-linejoin="round"
+					shape-rendering="geometricPrecision"
+					class="h-4 w-4 transition-colors duration-200"
+				>
+					<path d="M20 21.5v-2.5a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2.5h16" />
+					<circle cx="12" cy="7" r="4" />
+				</svg>
 			</span>
 		</button>
 	</header>
 {/if}
 
 <div class="flex min-h-screen items-center justify-center bg-stone-50 px-6">
-	{#if !showReview}
-		<div class="w-full max-w-xl">
-			<div class="flex items-center justify-between gap-4 text-stone-600">
-				<div class="flex items-center justify-between text-stone-600">
-					<div class="flex min-w-0 items-center gap-2">
-						{#if leadingText}
-							<span
-								class="font-mono text-lg tracking-widest"
-								in:fly|global={{ y: 4, delay: 300, duration: 200 }}
-							>
-								{leadingText}
-							</span>
-						{/if}
-					</div>
-				</div>
-			</div>
-
-			{#if isQuietHours}
-				<div class="mt-8 text-center">
-					<h2 class="text-2xl font-semibold text-stone-800">Goodnight.</h2>
-					<p class="mt-2 font-mono text-sm text-stone-600">
-						Come back in {countdown.hours}
-						{countdown.hours === 1 ? 'hour' : 'hours'}
-						and {countdown.minutes}
-						{countdown.minutes === 1 ? 'minute' : 'minutes'}
-					</p>
-
-					<div class="mt-6">
-						<DayDots {entries} {circleClassFor} {rangeLabel} />
-					</div>
-				</div>
-			{:else if isActiveSlot || !displayedEntry}
-				<form onsubmit={onSubmit} class="flex flex-row">
-					<input
-						type="text"
-						placeholder={placeholderStr}
-						value={currentBody}
-						oninput={onInput}
-						disabled={!isActiveSlot || !displayedEntry}
-						class="h-14 w-full border-none bg-transparent pr-2 pl-0 font-mono text-3xl font-light
-                                text-stone-900 ring-0 outline-none placeholder:text-stone-300
-                                focus:border-transparent focus:ring-0 focus:outline-none"
-						autofocus
-						aria-label="Current hour note"
-					/>
-				</form>
-			{:else}
-				<div class="mt-4">
-					<DayDots {entries} {circleClassFor} {rangeLabel} />
-				</div>
+	<div class="w-full max-w-xl">
+		{#key showInput}
+			{#if hydrated}
+				<InputState
+					{showInput}
+					{slotLabel}
+					{inputPlaceholder}
+					{currentBody}
+					{currentEntry}
+					{onInput}
+					{onSubmit}
+				/>
+				<DisplayState
+					showDisplay={!showInput}
+					{isQuietHours}
+					{entries}
+					{circleClassFor}
+					{rangeLabel}
+					{slotLabel}
+					{statusText}
+				/>
 			{/if}
-			<!-- {:else}
-				<div class="mt-2 flex w-full items-center gap-2">
-					<button
-						type="button"
-						class={activePill + ' h-12 flex-1 justify-center'}
-						onclick={() => recordAlignment(true)}
-					>
-						<span class="self-center text-lg">Good</span>
-					</button>
-
-					<button
-						type="button"
-						class={neutralPill + ' h-12 flex-1 justify-center text-xl'}
-						onclick={() => recordAlignment(false)}
-					>
-						<span class="self-center text-lg">Bad</span>
-					</button>
-				</div>
-			{/if} -->
-		</div>
-	{/if}
+		{/key}
+	</div>
 </div>
 
-{#if showHIWModal}
-	<div
-		in:fade={{ duration: 200 }}
-		class="fixed inset-0 z-[120] flex items-center justify-center bg-stone-50/70"
-		role="dialog"
-		aria-modal="true"
-		aria-label="Sign in"
-		tabindex="-1"
-		onclick={(e) => {
-			if (!authLoading && e.target === e.currentTarget) closeHIWModal();
-		}}
-		onkeydown={(e) => {
-			if (!authLoading && e.key === 'Escape') closeHIWModal();
-		}}
-	>
-		<div
-			in:scale={{ start: 0.96, duration: 180 }}
-			class="w-full max-w-3xl rounded-3xl bg-stone-50 p-16 text-stone-800"
-			role="document"
-		>
-			<div class="space-y-3 text-stone-700">
-				<div class="flex flex-row items-center justify-between">
-					<h3 class="text-xl font-semibold text-stone-900">How it works</h3>
-
-					<div class="flex flex-wrap items-center justify-center gap-3">
-						<span class="inline-flex items-center gap-1">
-							<span class="inline-block h-3.5 w-3.5 rounded-full bg-emerald-400" aria-hidden="true"
-							></span>
-							<span class="text-xs">Good</span>
-						</span>
-						<span class="inline-flex items-center gap-1">
-							<span class="inline-block h-3.5 w-3.5 rounded-full bg-red-400" aria-hidden="true"
-							></span>
-							<span class="text-xs">Bad</span>
-						</span>
-						<span class="inline-flex items-center gap-1">
-							<span
-								class="inline-block h-3.5 w-3.5 rounded-full border border-stone-400"
-								aria-hidden="true"
-							></span>
-							<span class="text-xs">Empty</span>
-						</span>
-						<span class="inline-flex items-center gap-1">
-							<span
-								class="inline-block h-3.5 w-3.5 rounded-full border border-dashed border-stone-400 bg-transparent"
-								aria-hidden="true"
-							></span>
-							<span class="text-xs">Future</span>
-						</span>
-					</div>
-				</div>
-				<ul class="list-disc space-y-2 pl-5">
-					<li>
-						<span class="text-stone-900">Log each hour (8am–11pm)</span>
-					</li>
-					<li>
-						<span class="text-stone-900">AI rates what you're doing</span>
-					</li>
-					<li>
-						<span class="text-stone-900">Summary at end of day</span>
-					</li>
-					<li>
-						<span class="text-stone-900">Autoposts summary image to Twitter for accountability</span
-						>
-					</li>
-					<li>
-						<span class="text-stone-900">Posts "I didn't do shit today" if no logs</span>
-					</li>
-				</ul>
-			</div>
-			{#if !hasUser}
-				<button
-					type="button"
-					onclick={signInWithTwitter}
-					disabled={authLoading}
-					class="mt-5 flex w-full items-center justify-center gap-2 rounded-xl border border-stone-200 bg-transparent px-4 py-3 text-sm font-medium text-stone-800 transition hover:border-stone-300 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
-				>
-					<svg
-						xmlns="http://www.w3.org/2000/svg"
-						viewBox="0 0 16 16"
-						class="h-5 w-5"
-						fill="currentColor"
-						aria-hidden="true"
-					>
-						<path
-							d="M12.6.75h2.454l-5.36 6.142L16 15.25h-4.937l-3.867-5.07-4.425 5.07H.316l5.733-6.57L0 .75h5.063l3.495 4.633L12.601.75Zm-.86 13.028h1.36L4.323 2.145H2.865z"
-						/>
-					</svg>
-					<span>{authLoading ? 'Redirecting…' : 'Continue with Twitter'}</span>
-				</button>
-			{/if}
-		</div>
-	</div>
-{/if}
-{#if showAuthModal}
-	<div
-		in:fade={{ duration: 200 }}
-		class="fixed inset-0 z-[120] flex items-center justify-center bg-stone-50/80"
-		role="dialog"
-		aria-modal="true"
-		aria-label="Sign in"
-		tabindex="-1"
-		onclick={(e) => {
-			if (!authLoading && e.target === e.currentTarget) closeAuthModal();
-		}}
-		onkeydown={(e) => {
-			if (!authLoading && e.key === 'Escape') closeAuthModal();
-		}}
-	>
-		<div
-			in:scale={{ start: 0.96, duration: 180 }}
-			class="w-full max-w-sm rounded-3xl border border-stone-200 bg-white p-6 text-stone-800 shadow-[0_12px_32px_rgba(15,15,15,0.12)]"
-			role="document"
-		>
-			<div class="flex items-center justify-between">
-				<div class="text-sm font-semibold tracking-tight text-stone-900">Sign in</div>
-				<button
-					type="button"
-					class="rounded-full p-1 text-stone-500 hover:text-stone-800"
-					onclick={closeAuthModal}
-					aria-label="Close sign in"
-					{...{ disabled: authLoading } as any}
-				>
-					<svg
-						viewBox="0 0 24 24"
-						class="h-4 w-4"
-						fill="none"
-						stroke="currentColor"
-						stroke-width="2"
-					>
-						<path d="M6 6l12 12M6 18L18 6" stroke-linecap="round" />
-					</svg>
-				</button>
-			</div>
-
-			<p class="mt-2 text-xs text-stone-500">Continue to save logs and track your progress.</p>
-
-			<button
-				type="button"
-				onclick={signInWithTwitter}
-				disabled={authLoading}
-				class="mt-5 flex w-full items-center justify-center gap-2 rounded-xl border border-stone-200 bg-white px-4 py-3 text-sm font-medium text-stone-800 transition hover:border-stone-300 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
-			>
-				<svg
-					xmlns="http://www.w3.org/2000/svg"
-					viewBox="0 0 16 16"
-					class="h-5 w-5"
-					fill="currentColor"
-					aria-hidden="true"
-				>
-					<path
-						d="M12.6.75h2.454l-5.36 6.142L16 15.25h-4.937l-3.867-5.07-4.425 5.07H.316l5.733-6.57L0 .75h5.063l3.495 4.633L12.601.75Zm-.86 13.028h1.36L4.323 2.145H2.865z"
-					/>
-				</svg>
-				<span>{authLoading ? 'Redirecting…' : 'Continue with Twitter'}</span>
-			</button>
-
-			{#if authError}
-				<p class="mt-3 text-xs text-rose-600">{authError}</p>
-			{/if}
-		</div>
-	</div>
-{/if}
-{#if showAutoPostModal && hasUser}
-	<div
-		in:fade={{ duration: 200 }}
-		class="fixed inset-0 z-[130] flex items-center justify-center bg-stone-50/80"
-		role="dialog"
-		aria-modal="true"
-		aria-label="Authorize auto-posting"
-		tabindex="-1"
-		onclick={(e) => {
-			if (!xAuthorizeLoading && e.target === e.currentTarget) closeAutoPostModal();
-		}}
-		onkeydown={(e) => {
-			if (!xAuthorizeLoading && e.key === 'Escape') closeAutoPostModal();
-		}}
-	>
-		<div
-			in:scale={{ start: 0.96, duration: 180 }}
-			class="w-full max-w-sm rounded-3xl border border-stone-200 bg-white p-6 text-stone-800 shadow-[0_12px_32px_rgba(15,15,15,0.12)]"
-			role="document"
-		>
-			<div class="flex items-center justify-between">
-				<div class="text-sm font-semibold tracking-tight text-stone-900">
-					Authorize auto-posting
-				</div>
-				<button
-					type="button"
-					class="rounded-full p-1 text-stone-500 hover:text-stone-800"
-					onclick={closeAutoPostModal}
-					aria-label="Close auto-post authorization"
-					{...{ disabled: xAuthorizeLoading } as any}
-				>
-					<svg
-						viewBox="0 0 24 24"
-						class="h-4 w-4"
-						fill="none"
-						stroke="currentColor"
-						stroke-width="2"
-					>
-						<path d="M6 6l12 12M6 18L18 6" stroke-linecap="round" />
-					</svg>
-				</button>
-			</div>
-
-			<p class="mt-2 text-xs text-stone-500">
-				Connect your X account so we can share your daily summary automatically.
-			</p>
-
-			<button
-				type="button"
-				onclick={authorizeAutoPost}
-				disabled={xAuthorizeLoading}
-				class="mt-5 flex w-full items-center justify-center gap-2 rounded-xl border border-stone-200 bg-white px-4 py-3 text-sm font-medium text-stone-800 transition hover:border-stone-300 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
-			>
-				<svg
-					xmlns="http://www.w3.org/2000/svg"
-					viewBox="0 0 16 16"
-					class="h-5 w-5"
-					fill="currentColor"
-					aria-hidden="true"
-				>
-					<path
-						d="M12.6.75h2.454l-5.36 6.142L16 15.25h-4.937l-3.867-5.07-4.425 5.07H.316l5.733-6.57L0 .75h5.063l3.495 4.633L12.601.75Zm-.86 13.028h1.36L4.323 2.145H2.865z"
-					/>
-				</svg>
-				<span>{xAuthorizeLoading ? 'Redirecting…' : 'Authorize with X'}</span>
-			</button>
-
-			{#if xAuthorizeError}
-				<p class="mt-3 text-xs text-rose-600">{xAuthorizeError}</p>
-			{/if}
-		</div>
-	</div>
-{/if}
+<HowItWorksModal
+	open={showHIWModal}
+	loading={authLoading}
+	{hasUser}
+	onClose={closeHIWModal}
+	onSignIn={signInWithTwitter}
+/>
+<AuthModal
+	open={showAuthModal}
+	loading={authLoading}
+	error={authError}
+	onSignIn={signInWithTwitter}
+	onClose={closeAuthModal}
+/>
+<AutoPostModal
+	open={showAutoPostModal && hasUser}
+	loading={xAuthorizeLoading}
+	error={xAuthorizeError}
+	onAuthorize={authorizeAutoPost}
+	onClose={closeAutoPostModal}
+/>
 <HistoryModal open={showHistory} onClose={() => (showHistory = false)} />
