@@ -1,9 +1,6 @@
-// supabase/functions/post-daily-summary/index.ts
-// Deno runtime (no Node APIs)
-
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-// --- Env (configure in project Settings → Functions → Secrets) ---
+// --- Env (configure in Project → Settings → Functions → Secrets) ---
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE = Deno.env.get('SERVICE_ROLE_KEY')!;
 const X_CLIENT_ID = Deno.env.get('X_CLIENT_ID')!;
@@ -11,33 +8,42 @@ const X_CLIENT_SECRET = Deno.env.get('X_CLIENT_SECRET')!;
 const CRON_SECRET = Deno.env.get('CRON_SECRET') ?? '';
 
 // --- Small helpers ---
-const json = (v: unknown, status = 200) =>
-  new Response(JSON.stringify(v), {
+const json = (value: unknown, status = 200) =>
+  new Response(JSON.stringify(value), {
     status,
     headers: { 'content-type': 'application/json' }
   });
 
 const cors = (res: Response) =>
   new Response(res.body, {
-    ...res,
+    status: res.status,
     headers: {
       'access-control-allow-origin': '*',
       'access-control-allow-headers': '*',
-      ...(res.headers || {})
+      'content-type': res.headers.get('content-type') ?? 'application/json'
     }
   });
 
-const unauthorized = (msg = 'Unauthorized') => cors(json({ error: msg }, 401));
+const unauthorized = (message = 'Unauthorized') => cors(json({ error: message }, 401));
 
 function isCronAuthorized(req: Request): boolean {
   if (!CRON_SECRET) return false;
-  const x = req.headers.get('x-cron-secret');
-  if (x && x === CRON_SECRET) return true;
+  const headerSecret = req.headers.get('x-cron-secret');
+  if (headerSecret && headerSecret === CRON_SECRET) return true;
   const h = req.headers.get('authorization') || '';
   if (h.toLowerCase().startsWith('bearer ') && h.slice(7).trim() === CRON_SECRET) return true;
   return false;
 }
 
+function prettyMonthDay(ymdStr: string, timeZone: string): string {
+  // Use noon UTC to avoid DST edge weirdness when converting to the user's TZ
+  const safe = new Date(`${ymdStr}T12:00:00Z`);
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    month: 'short',
+    day: '2-digit'
+  }).format(safe); // e.g. "Oct 25"
+}
 // --- X OAuth helpers ---
 const TOKEN_URL = 'https://api.x.com/2/oauth2/token';
 const REFRESH_SKEW_MS = 60_000; // refresh 1m early
@@ -73,24 +79,24 @@ async function refreshAccessToken(refreshToken: string): Promise<TokenRecord | n
     body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: refreshToken }),
   });
 
-  const j = await res.json().catch(() => ({}));
+  const payload = await res.json().catch(() => ({}));
   if (!res.ok) {
-    console.error('X OAuth refresh failed', j);
+    console.error('X OAuth refresh failed', payload);
     return null;
   }
 
-  const expires_at = computeExpiresAt(j.expires_at, j.expires_in);
+  const expires_at = computeExpiresAt(payload.expires_at, payload.expires_in);
   if (!expires_at) {
-    console.error('X refresh missing expires_at/expires_in', j);
+    console.error('X refresh missing expires_at/expires_in', payload);
     return null;
   }
 
   return {
-    access_token: j.access_token,
-    refresh_token: j.refresh_token ?? refreshToken,
+    access_token: payload.access_token,
+    refresh_token: payload.refresh_token ?? refreshToken,
     expires_at,
-    scope: j.scope ?? null,
-    token_type: j.token_type ?? 'bearer',
+    scope: payload.scope ?? null,
+    token_type: payload.token_type ?? 'bearer',
   };
 }
 
@@ -119,22 +125,66 @@ async function upsertTokensForUser(
 // --- Date helpers ---
 const ymd = (d: Date) => d.toISOString().slice(0, 10); // 'YYYY-MM-DD'
 
+// Convert a UTC Date to the user's local parts using Intl
+function partsInTZ(d: Date, timeZone: string) {
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  });
+  const parts = fmt.formatToParts(d);
+  const get = (t: Intl.DateTimeFormatPartTypes) => Number(parts.find(p => p.type === t)?.value);
+  return {
+    year: get('year'),
+    month: get('month'),
+    day: get('day'),
+    hour: get('hour'),
+    minute: get('minute'),
+    second: get('second')
+  };
+}
+
+// Compute YYYY-MM-DD for "yesterday" in the user's timezone
+function localYesterday(dateUtc: Date, timeZone: string): string {
+  const { year, month, day } = partsInTZ(dateUtc, timeZone);
+  // local midnight in UTC
+  const localMidnightUtcMs = Date.UTC(year, month - 1, day);
+  // subtract one day to get "yesterday" in that tz, then format as UTC ymd
+  return ymd(new Date(localMidnightUtcMs - 24 * 60 * 60 * 1000));
+}
+
+// Should we post now for this user? (true only within the midnight window in their tz)
+function isMidnightWindow(dateUtc: Date, timeZone: string, windowMinutes = 15): boolean {
+  const { hour, minute } = partsInTZ(dateUtc, timeZone);
+  return hour === 0 && minute >= 0 && minute < windowMinutes;
+}
+
+// --- Main handler ---
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return cors(new Response(null, { status: 204 }));
 
   // Gate behind cron secret (works for pg_net, curl, etc.)
   if (!isCronAuthorized(req)) return unauthorized();
 
-  // Optional dry run
+  // Optional toggles from body
   let dryRun = false;
+  let dateOverride: string | null = null; // 'YYYY-MM-DD' (interpreted as a reference date)
   try {
     const body = await req.clone().json().catch(() => null);
     dryRun = !!body?.dry_run;
-  } catch { /* ignore */ }
+    if (typeof body?.date_override === 'string' && body.date_override.trim()) {
+      dateOverride = body.date_override.trim();
+    }
+  } catch { /* ignore body */ }
 
   const supabase = createClient(SUPABASE_URL, SERVICE_ROLE, { auth: { persistSession: false } });
 
-  // ---- USERS: use ONLY the `users` table ----
+  // Use ONLY your internal users table (not auth.users)
   const { data: users, error: usersErr } = await supabase
     .from('users')
     .select('user_id, timezone')
@@ -142,32 +192,36 @@ Deno.serve(async (req) => {
 
   if (usersErr) return cors(json({ error: usersErr.message }, 500));
 
-  // For now: always target UTC yesterday (no midnight gating)
-  const nowIso = new Date().toISOString();
-  const utcToday = new Date();
-  const utcYday = new Date(Date.UTC(
-    utcToday.getUTCFullYear(),
-    utcToday.getUTCMonth(),
-    utcToday.getUTCDate() - 1
-  ));
-  const targetDate = ymd(utcYday);
+  const nowUtc = new Date();
 
+  // Canonical slotting: 8am..11pm (16 slots)
   const START_HOUR = 8;
   const TOTAL = 16;
 
   const results: Array<{ user_id: string; ok: boolean; reason?: string }> = [];
 
-  console.log('[post-daily-summary] invoked at (UTC):', nowIso);
+  console.log('[post-daily-summary] invoked at (UTC):', nowUtc.toISOString());
   console.log('[post-daily-summary] users found:', users?.length ?? 0);
 
   for (const u of users ?? []) {
     const userId = u.user_id;
     const tz = u.timezone || 'UTC';
 
-    // Log current time + user tz (for debugging)
-    console.log(`[user ${userId}] tz=${tz} now(UTC)=${nowIso} targetDate=${targetDate}`);
-
     try {
+      // Gate by local midnight window unless explicitly overridden
+      if (!dateOverride && !isMidnightWindow(nowUtc, tz)) {
+        console.log('it is not midnight for: ', userId);
+        console.log('they are in: ', tz);
+        results.push({ user_id: userId, ok: false, reason: 'not_midnight_window' });
+        continue;
+      }
+
+      // Determine target date:
+      // - If date_override is provided, still compute the "previous local day" relative to that reference.
+      //   (We parse 'YYYY-MM-DD' at noon UTC to avoid DST edges.)
+      const reference = dateOverride ? new Date(`${dateOverride}T12:00:00Z`) : nowUtc;
+      const targetDate = localYesterday(reference, tz);
+
       // Find the day row for targetDate
       const { data: day, error: dayErr } = await supabase
         .from('days')
@@ -200,7 +254,8 @@ Deno.serve(async (req) => {
           ? row.start_hour
           : Number.parseInt(String(row.start_hour), 10);
         if (Number.isNaN(h)) continue;
-        const aligned = row.aligned === null || row.aligned === undefined ? null : !!row.aligned;
+        const aligned =
+          row.aligned === null || row.aligned === undefined ? null : !!row.aligned;
         byHour.set(h, aligned);
       }
 
@@ -251,9 +306,15 @@ Deno.serve(async (req) => {
         await upsertTokensForUser(supabase, userId, tokens);
       }
 
-      // Build post body
       const line = dots.map(d => (d === true ? '🟢' : d === false ? '🔴' : '⚪')).join('');
-      const text = `${targetDate} | Score: ${score} | stoptrolling[dot]app\n${line}`;
+
+      const allWhite = dots.every(d => d === null);
+      const textLines: string[] = [];
+      if (allWhite) textLines.push("i didn't do shit today");
+      const prettyDate = prettyMonthDay(targetDate, tz);
+      textLines.push(`${prettyDate} | Score: ${score} | stoptrolling[dot]app`);
+      textLines.push(line);
+      const text = textLines.join('\n');
 
       if (dryRun) {
         results.push({ user_id: userId, ok: true, reason: 'dry_run' });
@@ -277,10 +338,11 @@ Deno.serve(async (req) => {
       }
 
       results.push({ user_id: userId, ok: true });
-    } catch (e: any) {
-      results.push({ user_id: userId, ok: false, reason: e?.message || 'unknown' });
+    } catch (error: unknown) {
+      const reason = error instanceof Error ? error.message : 'unknown';
+      results.push({ user_id: userId, ok: false, reason });
     }
   }
 
-  return cors(json({ ran_for: users?.length ?? 0, date: targetDate, dry_run: dryRun, results }));
+  return cors(json({ ran_for: users?.length ?? 0, dry_run: dryRun, results }));
 });

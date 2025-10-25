@@ -46,7 +46,7 @@
 
 	.day-dot.is-rating {
 		animation: dot-pulse 900ms ease-in-out infinite alternate;
-		animation-delay: 400ms;
+		animation-delay: 0ms;
 		animation-fill-mode: both;
 	}
 	@keyframes dot-pulse {
