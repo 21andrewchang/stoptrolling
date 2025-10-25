@@ -341,6 +341,8 @@
 	});
 	onDestroy(() => {
 		if (timer) clearInterval(timer);
+		ratingClearTimers.forEach((timeout) => clearTimeout(timeout));
+		ratingClearTimers.clear();
 	});
 
 	const SLOT_COUNT = 16;
@@ -644,20 +646,24 @@
 	}
 
 	function circleClassFor(entry: HourEntry): string {
-		if (isFuture(entry)) {
-			return 'border-dashed border-stone-400 border bg-transparent';
+		const classes: string[] = [];
+		const ratingState = ratingStates[entry.startHour];
+
+		if (ratingState === 'rating') {
+			classes.push('is-rating', 'bg-stone-400'); // force neutral while loading
+			return classes.join(' ');
 		}
-		if (entry.aligned === true) return 'bg-emerald-400';
-		if (entry.aligned === false) return 'bg-red-400';
 
-		// Not rated yet:
-		const hasBody = !!entry.body?.trim();
+		if (ratingState === 'finishing') classes.push('is-finishing');
 
-		// Logged but not rated -> neutral ring
-		if (hasBody) return 'bg-stone-400';
+		// Final/static state color (this will blend during 'finishing')
+		if (isFuture(entry)) classes.push('border-dashed border-stone-400 border bg-transparent');
+		else if (entry.aligned === true) classes.push('bg-emerald-400');
+		else if (entry.aligned === false) classes.push('bg-red-400');
+		else if (entry.body?.trim()) classes.push('bg-stone-400');
+		else classes.push('bg-transparent border border-stone-400');
 
-		// Not logged -> soft gray fill
-		return 'bg-transparent border border-stone-400';
+		return classes.join(' ');
 	}
 
 	function rangeLabel(entry: HourEntry): string {
@@ -668,6 +674,47 @@
 		currentBody = (e.currentTarget as HTMLInputElement).value;
 	}
 
+	const RATING_FINISH_DURATION = 700;
+	let ratingStates = $state<Record<number, 'rating' | 'finishing'>>({});
+	const ratingClearTimers = new Map<number, ReturnType<typeof setTimeout>>();
+
+	function cancelRatingTimeout(startHour: number) {
+		const existing = ratingClearTimers.get(startHour);
+		if (existing) {
+			clearTimeout(existing);
+			ratingClearTimers.delete(startHour);
+		}
+	}
+
+	function startRatingAnimation(startHour: number) {
+		cancelRatingTimeout(startHour);
+		ratingStates = { ...ratingStates, [startHour]: 'rating' };
+	}
+
+	function finishRatingAnimation(startHour: number) {
+		cancelRatingTimeout(startHour);
+		ratingStates = { ...ratingStates, [startHour]: 'finishing' };
+
+		const timeout = setTimeout(() => {
+			ratingClearTimers.delete(startHour);
+			const next = { ...ratingStates };
+			delete next[startHour];
+			ratingStates = next;
+		}, RATING_FINISH_DURATION);
+
+		ratingClearTimers.set(startHour, timeout);
+	}
+
+	function resetRatingAnimation(startHour: number) {
+		cancelRatingTimeout(startHour);
+		const next = { ...ratingStates };
+		delete next[startHour];
+		ratingStates = next;
+	}
+
+	let pendingIndex = $state<number | null>(null);
+	let pendingBody = $state<string | null>(null);
+
 	async function backgroundRateAndPersist(
 		dayId: string,
 		dayKey: string,
@@ -675,6 +722,8 @@
 		body: string,
 		goalText: string | null
 	): Promise<void> {
+		startRatingAnimation(startHour);
+
 		try {
 			const aligned = await ratingSvc.rateAndPersist(dayId, startHour, body, goalText ?? '');
 
@@ -685,12 +734,13 @@
 				pendingIndex = null;
 				pendingBody = null;
 			}
+
+			finishRatingAnimation(startHour);
 		} catch (err) {
 			console.error('backgroundRateAndPersist failed:', err);
+			resetRatingAnimation(startHour);
 		}
 	}
-	let pendingIndex = $state<number | null>(null);
-	let pendingBody = $state<string | null>(null);
 
 	async function submitGoal(e: SubmitEvent) {
 		e.preventDefault();

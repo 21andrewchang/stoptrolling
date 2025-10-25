@@ -1,14 +1,19 @@
 <script lang="ts">
 	import { fade, scale } from 'svelte/transition';
 
-	const { open = false, loading = false, hasUser = false, onClose = null, onSignIn = null } =
-		$props<{
-			open?: boolean;
-			loading?: boolean;
-			hasUser?: boolean;
-			onClose?: (() => void) | null;
-			onSignIn?: (() => void) | null;
-		}>();
+	const {
+		open = false,
+		loading = false,
+		hasUser = false,
+		onClose = null,
+		onSignIn = null
+	} = $props<{
+		open?: boolean;
+		loading?: boolean;
+		hasUser?: boolean;
+		onClose?: (() => void) | null;
+		onSignIn?: (() => void) | null;
+	}>();
 
 	function handleClose() {
 		if (loading) return;
@@ -80,19 +85,18 @@
 				</div>
 				<ul class="list-disc space-y-2 pl-5">
 					<li>
-						<span class="text-stone-900">Log each hour (8am–11pm)</span>
+						<span class="text-stone-900">Log your activity every hour (8am–11pm)</span>
 					</li>
 					<li>
-						<span class="text-stone-900">AI rates what you're doing</span>
+						<span class="text-stone-900">AI rates how productive you are</span>
 					</li>
 					<li>
-						<span class="text-stone-900">Summary at end of day</span>
+						<span class="text-stone-900">Summary gets auto-posted to twitter at end of day</span>
 					</li>
 					<li>
-						<span class="text-stone-900">Autoposts summary image to Twitter for accountability</span>
-					</li>
-					<li>
-						<span class="text-stone-900">Posts "I didn't do shit today" if no logs</span>
+						<span class="text-stone-900"
+							>If you didn't log anything, it posts "I didn't do shit today"</span
+						>
 					</li>
 				</ul>
 			</div>
