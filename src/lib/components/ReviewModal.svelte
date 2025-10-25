@@ -41,6 +41,15 @@
 		toastOpen = false;
 	}
 
+	function scoreBgClass(value: number): string {
+		const s = Math.max(0, Math.min(100, Math.round(value)));
+
+		if (s <= 25) return 'bg-stone-400'; // 0–25
+		if (s <= 50) return 'bg-red-400'; // 26–50
+		if (s <= 75) return 'bg-emerald-400'; // 51–75
+		return 'bg-amber-400'; // 51–75
+	}
+
 	function notify(message: string, t: ToastTone = 'neutral', autoHide = 3000) {
 		msg = message;
 		tone = t;
@@ -172,7 +181,7 @@
 					<h2 class="font-mono text-xl leading-tight text-stone-900">
 						{shortDate(date) || ''}
 					</h2>
-					<div class="rounded-lg bg-stone-500/80 px-2.5 py-1 font-mono text-sm text-white">
+					<div class={`rounded-md px-2.5 py-1 font-mono text-sm text-white ${scoreBgClass(score)}`}>
 						{score}
 					</div>
 				</div>
@@ -222,29 +231,8 @@
 					{siteLabel}
 				</div>
 			</div>
-			<div class="mt-2 flex w-full justify-between pl-4">
+			<div class="mt-2 flex w-full justify-between">
 				<div class="flex flex-row gap-2">
-					<button
-						type="button"
-						class="flex items-center gap-2 rounded-md bg-stone-900 px-3 text-xs font-medium text-white transition hover:bg-stone-800 focus:ring-2 focus:ring-stone-400 focus:outline-none disabled:cursor-not-allowed disabled:opacity-70"
-						onclick={postToX}
-						disabled={postLoading}
-						aria-label="Share this summary to X"
-						title="Share to X"
-					>
-						<svg
-							xmlns="http://www.w3.org/2000/svg"
-							viewBox="0 0 16 16"
-							class="h-3 w-3"
-							fill="currentColor"
-							aria-hidden="true"
-						>
-							<path
-								d="M12.6.75h2.454l-5.36 6.142L16 15.25h-4.937l-3.867-5.07-4.425 5.07H.316l5.733-6.57L0 .75h5.063l3.495 4.633L12.601.75Zm-.86 13.028h1.36L4.323 2.145H2.865z"
-							/>
-						</svg>
-						<span>{postLoading ? 'Posting…' : 'Post'}</span>
-					</button>
 					<button
 						type="button"
 						class="ml-2 flex rounded-md p-2 text-stone-600 transition hover:bg-stone-200/50 focus:ring-2 focus:ring-stone-400 focus:outline-none"

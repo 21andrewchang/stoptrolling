@@ -49,10 +49,10 @@
 	>
 		<div
 			in:scale={{ start: 0.96, duration: 180 }}
-			class="w-full max-w-3xl rounded-3xl bg-stone-50 p-16 text-stone-800"
+			class="w-full max-w-2xl rounded-2xl border border-stone-200 bg-stone-50 p-16 text-stone-800"
 			role="document"
 		>
-			<div class="space-y-3 text-stone-700">
+			<div class="space-y-6 text-stone-700">
 				<div class="flex flex-row items-center justify-between">
 					<h3 class="text-xl font-semibold text-stone-900">How it works</h3>
 
@@ -85,10 +85,13 @@
 				</div>
 				<ul class="list-disc space-y-2 pl-5">
 					<li>
-						<span class="text-stone-900">Log your activity every hour (8am–11pm)</span>
+						<span class="text-stone-900">Work day is 8am-12am, sleep 8hrs</span>
 					</li>
 					<li>
-						<span class="text-stone-900">AI rates how productive you are</span>
+						<span class="text-stone-900">Every hour, log what you're doing</span>
+					</li>
+					<li>
+						<span class="text-stone-900">AI rates how productive you are (Good/Bad)</span>
 					</li>
 					<li>
 						<span class="text-stone-900">Summary gets auto-posted to twitter at end of day</span>
@@ -97,6 +100,9 @@
 						<span class="text-stone-900"
 							>If you didn't log anything, it posts "I didn't do shit today"</span
 						>
+					</li>
+					<li>
+						<span class="text-stone-900">Stop trolling, start working</span>
 					</li>
 				</ul>
 			</div>
