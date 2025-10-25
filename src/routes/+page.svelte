@@ -483,6 +483,13 @@
 		aligned: boolean | null;
 	};
 
+	const ymdLocal = (d: Date) => {
+		const y = d.getFullYear();
+		const m = String(d.getMonth() + 1).padStart(2, '0');
+		const day = String(d.getDate()).padStart(2, '0');
+		return `${y}-${m}-${day}`;
+	};
+
 	async function loadHistoryInBackground(user_id: string): Promise<void> {
 		if (!user_id) return;
 		if (historyForUser === user_id && get(historyLoaded)) return;
@@ -566,6 +573,7 @@
 						((goodCount + badCount) / HISTORY_SLOT_COUNT) * 100 + goodCount - badCount;
 					const score = Math.max(0, Math.min(100, Math.round(rawScore)));
 
+					// keep whatever you already had here
 					const isoDate =
 						typeof day.date === 'string' && day.date
 							? day.date
@@ -581,7 +589,19 @@
 					};
 				});
 
-				historyStore.set(history);
+				// ⬇️ filter out "today" (local) and (for safety) "today" in UTC
+				const todayLocal = ymdLocal(new Date());
+				const todayUtc = (() => {
+					const d = new Date();
+					const y = d.getUTCFullYear();
+					const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+					const day = String(d.getUTCDate()).padStart(2, '0');
+					return `${y}-${m}-${day}`;
+				})();
+
+				const pastOnly = history.filter((d) => d.date !== todayLocal && d.date !== todayUtc);
+
+				historyStore.set(pastOnly);
 				historyLoaded.set(true);
 				historyForUser = user_id;
 			} catch (err) {

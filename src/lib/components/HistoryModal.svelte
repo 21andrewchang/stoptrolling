@@ -5,13 +5,20 @@
 	export let open = false;
 	export let onClose: (() => void) | undefined;
 
+	function scoreBgClass(value: number): string {
+		const s = Math.max(0, Math.min(100, Math.round(value)));
+
+		if (s <= 25) return 'bg-stone-400'; // 0–25
+		if (s <= 50) return 'bg-red-500'; // 26–50
+		if (s <= 75) return 'bg-emerald-500'; // 51–75
+		return 'bg-amber-400'; // 51–75
+	}
 	const shortDate = (iso: string): string => {
 		const date = new Date(iso);
 		if (Number.isNaN(date.getTime())) return iso;
 		return date.toLocaleDateString(undefined, {
 			month: 'short',
-			day: 'numeric',
-			year: 'numeric'
+			day: 'numeric'
 		});
 	};
 
@@ -50,7 +57,7 @@
 	>
 		<button
 			type="button"
-			class="absolute top-4 left-4 inline-flex h-8 w-8 items-center justify-center rounded-full text-stone-500 transition hover:text-stone-800 focus:outline-none"
+			class="absolute top-4 left-6 mt-1 inline-flex h-4 w-4 items-center justify-center text-stone-500 transition hover:text-stone-800 focus:outline-none"
 			onclick={handleClose}
 			aria-label="Close history"
 		>
@@ -79,9 +86,11 @@
 							<li class="rounded-xl border border-stone-200 bg-stone-50 p-4">
 								<div class="flex items-center justify-between">
 									<span class="font-mono text-sm text-stone-600">{shortDate(day.date)}</span>
-									<span class="rounded-lg bg-stone-900 px-2.5 py-1 font-mono text-sm text-white">
+									<div
+										class={`rounded-md px-2.5 py-1 font-mono text-sm text-white ${scoreBgClass(day.score)}`}
+									>
 										{day.score}
-									</span>
+									</div>
 								</div>
 								<div class="mt-3 flex w-full items-center">
 									<div class="flex w-full justify-between">

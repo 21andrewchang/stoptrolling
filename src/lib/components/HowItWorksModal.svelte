@@ -85,13 +85,13 @@
 				</div>
 				<ul class="list-disc space-y-2 pl-5">
 					<li>
-						<span class="text-stone-900">Work day is 8am-12am, sleep 8hrs</span>
+						<span class="text-stone-900">Work day is 8am-12am, must sleep 8hrs</span>
 					</li>
 					<li>
 						<span class="text-stone-900">Every hour, log what you're doing</span>
 					</li>
 					<li>
-						<span class="text-stone-900">AI rates how productive you are (Good/Bad)</span>
+						<span class="text-stone-900">AI rates how productive you're being</span>
 					</li>
 					<li>
 						<span class="text-stone-900">Summary gets auto-posted to twitter at end of day</span>
@@ -111,12 +111,12 @@
 					type="button"
 					onclick={handleSignIn}
 					disabled={loading}
-					class="mt-5 flex w-full items-center justify-center gap-2 rounded-xl border border-stone-200 bg-transparent px-4 py-3 text-sm font-medium text-stone-800 transition hover:border-stone-300 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
+					class="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-stone-900 px-4 py-3 text-sm font-medium text-stone-100 transition disabled:cursor-not-allowed disabled:opacity-60"
 				>
 					<svg
 						xmlns="http://www.w3.org/2000/svg"
 						viewBox="0 0 16 16"
-						class="h-5 w-5"
+						class="h-4 w-4"
 						fill="currentColor"
 						aria-hidden="true"
 					>

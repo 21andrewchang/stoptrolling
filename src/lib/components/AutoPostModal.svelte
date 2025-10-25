@@ -1,14 +1,19 @@
 <script lang="ts">
 	import { fade, scale } from 'svelte/transition';
 
-	const { open = false, loading = false, error = '', onAuthorize = null, onClose = null } =
-		$props<{
-			open?: boolean;
-			loading?: boolean;
-			error?: string;
-			onAuthorize?: (() => void) | null;
-			onClose?: (() => void) | null;
-		}>();
+	const {
+		open = false,
+		loading = false,
+		error = '',
+		onAuthorize = null,
+		onClose = null
+	} = $props<{
+		open?: boolean;
+		loading?: boolean;
+		error?: string;
+		onAuthorize?: (() => void) | null;
+		onClose?: (() => void) | null;
+	}>();
 
 	function handleCloseClick() {
 		if (loading) return;
@@ -71,19 +76,20 @@
 			</div>
 
 			<p class="mt-2 text-xs text-stone-500">
-				Connect your X account so we can share your daily summary automatically.
+				Connect your Twitter to keep yourself accountable. Summary gets posted automatically at
+				12am.
 			</p>
 
 			<button
 				type="button"
 				onclick={handleAuthorizeClick}
 				disabled={loading}
-				class="mt-5 flex w-full items-center justify-center gap-2 rounded-xl border border-stone-200 bg-white px-4 py-3 text-sm font-medium text-stone-800 transition hover:border-stone-300 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
+				class="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-stone-900 px-4 py-3 text-sm font-medium text-stone-100 transition hover:border-stone-300 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
 			>
 				<svg
 					xmlns="http://www.w3.org/2000/svg"
 					viewBox="0 0 16 16"
-					class="h-5 w-5"
+					class="h-4 w-4"
 					fill="currentColor"
 					aria-hidden="true"
 				>
@@ -91,7 +97,7 @@
 						d="M12.6.75h2.454l-5.36 6.142L16 15.25h-4.937l-3.867-5.07-4.425 5.07H.316l5.733-6.57L0 .75h5.063l3.495 4.633L12.601.75Zm-.86 13.028h1.36L4.323 2.145H2.865z"
 					/>
 				</svg>
-				<span>{loading ? 'Redirecting…' : 'Authorize with X'}</span>
+				<span>{loading ? 'Redirecting…' : 'Authorize'}</span>
 			</button>
 
 			{#if error}
