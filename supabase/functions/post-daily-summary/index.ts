@@ -310,7 +310,7 @@ Deno.serve(async (req) => {
       const textLines: string[] = [];
       if (allWhite) textLines.push("i didn't do shit today");
       const prettyDate = prettyMonthDay(targetDate, tz);
-      textLines.push(`${prettyDate} | Score: ${score} | stoptrolling[dot]app`);
+      textLines.push(`${prettyDate} | Productivity Score: ${score} | stoptrolling[dot]app`);
       textLines.push(line);
       const text = textLines.join('\n');
 
