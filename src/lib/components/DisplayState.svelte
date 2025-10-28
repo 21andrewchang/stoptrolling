@@ -3,14 +3,12 @@
 	import DayDots from '$lib/components/DayDots.svelte';
 
 	let {
-		isQuietHours = false,
 		showDisplay = false,
 		entries = [],
 		circleClassFor,
 		rangeLabel,
 		statusText = ''
 	} = $props<{
-		isQuietHours?: boolean;
 		showDisplay: boolean;
 		entries?: any[];
 		circleClassFor: (e: any) => string;
@@ -27,9 +25,6 @@
 				class="flex min-w-0 flex-row items-center gap-2"
 				in:fly|global={{ y: 4, delay: 200, duration: 200 }}
 			>
-				{#if isQuietHours}
-					<div class="font-mono text-lg">Goodnight</div>
-				{/if}
 				<span class="font-mono text-lg tracking-widest">{statusText}</span>
 			</div>
 		</div>

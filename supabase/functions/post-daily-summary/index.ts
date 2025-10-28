@@ -208,19 +208,16 @@ Deno.serve(async (req) => {
     const tz = u.timezone || 'UTC';
 
     try {
-      // Gate by local midnight window unless explicitly overridden
+      const reference = dateOverride ? new Date(`${dateOverride}T12:00:00Z`) : nowUtc;
+      const targetDate = localYesterday(reference, tz);
+      console.log('date: ', targetDate);
+
       if (!dateOverride && !isMidnightWindow(nowUtc, tz)) {
         console.log('it is not midnight for: ', userId);
         console.log('they are in: ', tz);
         results.push({ user_id: userId, ok: false, reason: 'not_midnight_window' });
         continue;
       }
-
-      // Determine target date:
-      // - If date_override is provided, still compute the "previous local day" relative to that reference.
-      //   (We parse 'YYYY-MM-DD' at noon UTC to avoid DST edges.)
-      const reference = dateOverride ? new Date(`${dateOverride}T12:00:00Z`) : nowUtc;
-      const targetDate = localYesterday(reference, tz);
 
       // Find the day row for targetDate
       const { data: day, error: dayErr } = await supabase
@@ -241,6 +238,7 @@ Deno.serve(async (req) => {
         .select('start_hour, aligned')
         .eq('day_id', day.id)
         .order('start_hour');
+
 
       if (hoursErr) {
         results.push({ user_id: userId, ok: false, reason: 'hours query failed' });
@@ -312,7 +310,7 @@ Deno.serve(async (req) => {
       const textLines: string[] = [];
       if (allWhite) textLines.push("i didn't do shit today");
       const prettyDate = prettyMonthDay(targetDate, tz);
-      textLines.push(`${prettyDate} | Score: ${score} | stoptrolling[dot]app`);
+      textLines.push(`${prettyDate} | Productivity Score: ${score} | stoptrolling[dot]app`);
       textLines.push(line);
       const text = textLines.join('\n');
 

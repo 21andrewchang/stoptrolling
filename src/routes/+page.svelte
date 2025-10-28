@@ -310,16 +310,11 @@
 		return tomorrow;
 	}
 
-	const msUntil8 = $derived(
-		(() => {
-			if (!isQuietHours) return 0;
-			return Math.max(0, nextEightAM(now).getTime() - now.getTime());
-		})()
-	);
+	const msUntil8 = $derived((() => Math.max(0, nextEightAM(now).getTime() - now.getTime()))());
 
 	const countdown = $derived(
 		(() => {
-			if (!isQuietHours || msUntil8 <= 0) return { hours: 0, minutes: 0 };
+			if (msUntil8 <= 0) return { hours: 0, minutes: 0 };
 			const totalMinutes = Math.ceil(msUntil8 / 60000);
 			const hours = Math.floor(totalMinutes / 60);
 			const minutes = totalMinutes % 60;
@@ -382,9 +377,23 @@
 		})()
 	);
 
+	const isDayComplete = $derived(
+		(() => {
+			if (!entries.length) return false;
+			if (date !== ymd(now)) return false;
+			if (currentIndex === null) return false;
+			const lastIndex = entries.length - 1;
+			if (currentIndex !== lastIndex) return false;
+			const lastEntry = entries[lastIndex];
+			return !!lastEntry?.body?.trim();
+		})()
+	);
+
 	const statusText = $derived(
 		(() => {
-			if (isQuietHours) {
+			const nightMode = isQuietHours || isDayComplete;
+
+			if (nightMode) {
 				const parts: string[] = [];
 				if (countdown.hours > 0) {
 					parts.push(`${countdown.hours} hour${countdown.hours === 1 ? '' : 's'}`);
@@ -392,8 +401,8 @@
 				if (countdown.minutes > 0) {
 					parts.push(`${countdown.minutes} minute${countdown.minutes === 1 ? '' : 's'}`);
 				}
-				const suffix = parts.length ? `Come back in ${parts.join(' and ')}.` : 'Come back soon.';
-				return `Goodnight. ${suffix}`;
+				const suffix = parts.length ? `Come back in ${parts.join(' and ')}...` : 'Come back soon.';
+				return `${suffix}`;
 			}
 
 			const entry = currentEntry;
@@ -417,6 +426,165 @@
 			return labelForMins(minsUntilEnd);
 		})()
 	);
+
+	const DEFAULT_TAB_TITLE = 'stoptrolling';
+	const DOT_BORDER_COLOR = '#a8a29e';
+
+	function to12Hour(hour: number): number {
+		const normalized = ((hour % 12) + 12) % 12;
+		return normalized === 0 ? 12 : normalized;
+	}
+
+	function formatHourRangeShort(entry: HourEntry): string {
+		const startHour = entry.startHour;
+		const endHour = (startHour + 1) % 24;
+
+		const startPeriod = startHour >= 12 ? 'PM' : 'AM';
+		const endPeriod = endHour >= 12 ? 'PM' : 'AM';
+		const startLabel = to12Hour(startHour);
+		const endLabel = to12Hour(endHour);
+
+		if (startPeriod === endPeriod) {
+			return `${startLabel}-${endLabel}${startPeriod}`;
+		}
+
+		return `${startLabel}${startPeriod}-${endLabel}${endPeriod}`;
+	}
+
+	function formatDurationLabel(ms: number): string {
+		if (ms <= 0) return 'Ready';
+
+		const totalMinutes = Math.max(1, Math.ceil(ms / 60000));
+		const hours = Math.floor(totalMinutes / 60);
+		const minutes = totalMinutes % 60;
+		const parts: string[] = [];
+
+		if (hours > 0) parts.push(`${hours} hour${hours === 1 ? '' : 's'}`);
+		if (minutes > 0) parts.push(`${minutes} minute${minutes === 1 ? '' : 's'}`);
+
+		if (!parts.length) parts.push('Less than a minute');
+
+		return `${parts.join(' ')}...`;
+	}
+
+	type FaviconMode = 'ring' | 'moon' | 'solid';
+
+	function faviconSvg(mode: FaviconMode): string {
+		if (mode === 'moon') {
+			return `
+    <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" aria-hidden="true">
+      <defs>
+        <!-- Create a crescent by subtracting a smaller, offset circle -->
+        <mask id="moon-cut">
+          <rect width="100%" height="100%" fill="black"/>
+          <!-- Base disk -->
+          <circle cx="32" cy="32" r="22" fill="white"/>
+          <!-- Cutout disk (tweak cx/cy/r for thickness/curve) -->
+          <circle cx="44" cy="24" r="18" fill="black"/>
+        </mask>
+      </defs>
+      <!-- Fill with the shared dot color -->
+      <rect width="64" height="64" fill="#a8a29e" mask="url(#moon-cut)"/>
+    </svg>
+  `;
+		}
+
+		if (mode === 'solid') {
+			return `
+				<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+					<circle cx="32" cy="32" r="22" fill="${DOT_BORDER_COLOR}" />
+				</svg>
+			`;
+		}
+
+		return `
+			<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+				<circle
+					cx="32"
+					cy="32"
+					r="22"
+					fill="none"
+					stroke="${DOT_BORDER_COLOR}"
+					stroke-width="6"
+					stroke-dasharray="10 10"
+					stroke-linecap="round"
+				/>
+			</svg>
+		`;
+	}
+
+	const tabTitle = $derived(
+		(() => {
+			if (!hydrated) return DEFAULT_TAB_TITLE;
+			const entry = currentEntry;
+
+			if (showInput && entry) {
+				return `${formatHourRangeShort(entry)} Ready`;
+			}
+
+			if (hasCurrentLog && entry && !isDayComplete) {
+				const { end } = slotRange(date, entry.startHour, endHourOf);
+				const remaining = Math.max(0, end.getTime() - now.getTime());
+				return formatDurationLabel(remaining);
+			}
+
+			if (isQuietHours || isDayComplete) {
+				return 'Goodnight';
+			}
+
+			if (entry) {
+				const { start } = slotRange(date, entry.startHour, endHourOf);
+				const untilStart = start.getTime() - now.getTime();
+				if (untilStart > 0) return formatDurationLabel(untilStart);
+			}
+
+			const status = String(statusText ?? '').trim();
+			return status || DEFAULT_TAB_TITLE;
+		})()
+	);
+
+	let lastFaviconHref: string | null = null;
+	let lastFaviconMode: FaviconMode | null = null;
+
+	function setFavicon(mode: FaviconMode): void {
+		if (typeof document === 'undefined') return;
+		if (mode === lastFaviconMode) return;
+
+		const svg = faviconSvg(mode).trim();
+		const href = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+		if (href === lastFaviconHref) return;
+		lastFaviconHref = href;
+		lastFaviconMode = mode;
+
+		let link =
+			document.querySelector<HTMLLinkElement>('link[rel="icon"]') ??
+			document.querySelector<HTMLLinkElement>('link[rel="shortcut icon"]');
+
+		if (!link) {
+			link = document.createElement('link');
+			link.rel = 'icon';
+			document.head.appendChild(link);
+		}
+
+		link.setAttribute('type', 'image/svg+xml');
+		link.setAttribute('sizes', 'any');
+		link.href = href;
+	}
+
+	const faviconMode = $derived(
+		(() => {
+			if (!hydrated) return 'ring' as const;
+			if (isQuietHours || isDayComplete) return 'moon' as const;
+			if (showInput && currentEntry) return 'solid' as const;
+			return 'ring' as const;
+		})()
+	);
+
+	$effect(() => {
+		if (typeof document === 'undefined') return;
+		document.title = tabTitle || DEFAULT_TAB_TITLE;
+		setFavicon(faviconMode);
+	});
 
 	let currentBody = $state('');
 	$effect(() => {
@@ -933,7 +1101,6 @@
 				/>
 				<DisplayState
 					showDisplay={!showInput}
-					{isQuietHours}
 					{entries}
 					{circleClassFor}
 					{rangeLabel}
